@@ -1,0 +1,401 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>シフト作成アプリ 取扱説明書</title>
+<style>
+  :root {
+    --navy: #14213d; --navy2: #22345e; --orange: #f28c28; --orange-dark: #c75a00;
+    --yellow: #ffc845; --ink: #1e2533; --gray: #5b6577; --line: #d7dde8;
+    --light: #eef2f8; --pale: #fff3e3; --red: #c62828; --bg: #ffffff;
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body { margin: 0; background: var(--bg); color: var(--ink);
+    font-family: "Meiryo", "メイリオ", "Hiragino Sans", "Yu Gothic", "Noto Sans JP", sans-serif;
+    font-size: 16px; line-height: 1.85; }
+  header.top { background: var(--navy); color: #fff; padding: 28px 20px 24px; }
+  header.top .inner { max-width: 1100px; margin: 0 auto; }
+  header.top .kicker { color: var(--yellow); font-weight: bold; font-size: 14px; letter-spacing: .05em; }
+  header.top h1 { margin: 6px 0 8px; font-size: 30px; line-height: 1.35; }
+  header.top p { margin: 0; color: #c9d3e6; font-size: 15px; }
+  header.top .actions { margin-top: 14px; display: flex; gap: 10px; flex-wrap: wrap; }
+  .btn { display: inline-block; padding: 8px 16px; border-radius: 8px; font-weight: bold; text-decoration: none; font-size: 15px; }
+  .btn-orange { background: var(--orange); color: #fff; }
+  .btn-ghost { border: 1px solid #5c6f99; color: #fff; }
+  .layout { max-width: 1100px; margin: 0 auto; display: grid; grid-template-columns: 250px 1fr; gap: 36px; padding: 28px 20px 60px; }
+  nav.toc { position: sticky; top: 16px; align-self: start; max-height: calc(100vh - 32px); overflow: auto;
+    border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; font-size: 14px; background: #fafbfd; }
+  nav.toc b { display: block; color: var(--navy); margin-bottom: 6px; }
+  nav.toc ol { margin: 0; padding-left: 20px; }
+  nav.toc li { margin: 3px 0; }
+  nav.toc a { color: var(--ink); text-decoration: none; }
+  nav.toc a:hover { color: var(--orange-dark); text-decoration: underline; }
+  main { min-width: 0; }
+  section { margin-bottom: 44px; scroll-margin-top: 12px; }
+  h2 { font-size: 24px; color: var(--navy); margin: 0 0 14px; padding-bottom: 8px; border-bottom: 3px solid var(--orange); }
+  h2 .num { display: inline-flex; align-items: center; justify-content: center; width: 34px; height: 34px; border-radius: 50%;
+    background: var(--navy); color: #fff; font-size: 17px; margin-right: 10px; vertical-align: 2px; }
+  h3 { font-size: 19px; color: var(--navy2); margin: 26px 0 8px; }
+  p { margin: 8px 0; }
+  figure { margin: 14px 0 18px; }
+  figure img { width: 100%; height: auto; border: 1px solid var(--line); border-radius: 8px; display: block; }
+  figcaption { font-size: 13.5px; color: var(--gray); margin-top: 6px; }
+  table { width: 100%; border-collapse: collapse; margin: 10px 0 16px; font-size: 15px; }
+  th, td { border: 1px solid var(--line); padding: 7px 10px; text-align: left; vertical-align: top; }
+  th { background: var(--light); color: var(--navy); white-space: nowrap; }
+  .note, .warn, .tip { border-radius: 10px; padding: 12px 16px; margin: 14px 0; font-size: 15px; }
+  .note { background: var(--light); }
+  .tip { background: var(--pale); border: 1px solid #f5c79b; }
+  .warn { background: #fdecea; border: 1px solid #f3b8b3; }
+  .note b:first-child, .tip b:first-child, .warn b:first-child { display: block; margin-bottom: 2px; }
+  .warn b:first-child { color: var(--red); }
+  .tip b:first-child { color: var(--orange-dark); }
+  .steps { counter-reset: st; list-style: none; padding: 0; margin: 10px 0; }
+  .steps > li { counter-increment: st; position: relative; padding: 2px 0 10px 44px; }
+  .steps > li::before { content: counter(st); position: absolute; left: 0; top: 2px; width: 30px; height: 30px; border-radius: 50%;
+    background: var(--orange); color: #fff; font-weight: bold; display: flex; align-items: center; justify-content: center; font-size: 15px; }
+  .stepcard { border: 1px solid var(--line); border-radius: 12px; padding: 14px 18px; margin: 14px 0; }
+  .stepcard .head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 4px; }
+  .pill { display: inline-block; background: #2563eb; color: #fff; font-weight: bold; border-radius: 999px; padding: 2px 12px; font-size: 14px; }
+  .stepcard .title { font-weight: bold; font-size: 17px; color: var(--navy); }
+  kbd, .ui { display: inline-block; border: 1px solid #b7c2d6; background: #f7f9fc; border-radius: 6px; padding: 0 7px; font-size: .92em; font-family: inherit; white-space: nowrap; }
+  .chip { display: inline-block; min-width: 2.2em; text-align: center; border-radius: 5px; padding: 0 6px; font-weight: bold; border: 1px solid rgba(0,0,0,.08); }
+  .c-day { background: #cffafe; } .c-early { background: #fef9c3; } .c-late { background: #f3e8ff; color: #6b21a8; }
+  .c-night { background: #4f46e5; color: #fff; } .c-end { background: #fed7aa; } .c-off { background: #fee2e2; color: #b91c1c; }
+  .c-paid { background: #fce7f3; } .c-mix { background: #f5d0fe; color: #86198f; } .c-other { background: #e5e7eb; }
+  .red-frame { display: inline-block; width: 1.4em; height: 1.1em; border: 3px solid red; vertical-align: -2px; }
+  details { border: 1px solid var(--line); border-radius: 10px; padding: 10px 14px; margin: 8px 0; }
+  details summary { cursor: pointer; font-weight: bold; color: var(--navy); }
+  details[open] summary { margin-bottom: 6px; }
+  footer { border-top: 1px solid var(--line); padding: 20px; text-align: center; color: var(--gray); font-size: 13.5px; }
+  .backtop { position: fixed; right: 16px; bottom: 16px; background: var(--navy); color: #fff; text-decoration: none;
+    border-radius: 999px; padding: 8px 14px; font-size: 14px; box-shadow: 0 2px 8px rgba(0,0,0,.2); }
+  @media (max-width: 860px) {
+    .layout { grid-template-columns: 1fr; gap: 16px; }
+    nav.toc { position: static; max-height: none; }
+    header.top h1 { font-size: 24px; }
+    table { font-size: 14px; }
+  }
+  @media print {
+    .backtop, header.top .actions, nav.toc { display: none; }
+    .layout { display: block; padding: 0 10mm; }
+    header.top { background: #fff; color: var(--navy); border-bottom: 3px solid var(--orange); }
+    header.top p { color: var(--gray); }
+    section { break-inside: auto; }
+    figure, .stepcard, table, .note, .tip, .warn { break-inside: avoid; }
+    details { border: none; padding: 0; }
+  }
+</style>
+</head>
+<body>
+
+<header class="top" id="top">
+  <div class="inner">
+    <div class="kicker">シフト作成アプリ（試験運用版 v.21）</div>
+    <h1>取扱説明書</h1>
+    <p>介護老人保健施設の現場職員が、生成AIを設計の相談相手にしながら自作したシフト自動作成アプリの使い方です。</p>
+    <div class="actions">
+      <a class="btn btn-orange" href="index.html">アプリを開く</a>
+      <a class="btn btn-ghost" href="#monthly">毎月の作成手順へ</a>
+      <a class="btn btn-ghost" href="#faq">困ったときは</a>
+    </div>
+  </div>
+</header>
+
+<div class="layout">
+  <nav class="toc" aria-label="目次">
+    <b>目次</b>
+    <ol>
+      <li><a href="#about">このアプリについて</a></li>
+      <li><a href="#before">はじめる前に（動作環境・データの保存）</a></li>
+      <li><a href="#screen">画面の見方</a></li>
+      <li><a href="#codes">勤務記号の一覧</a></li>
+      <li><a href="#setup">最初の準備（初回のみ）</a></li>
+      <li><a href="#monthly">毎月の作成手順（6ステップ）</a></li>
+      <li><a href="#edit">手で直す・確定する</a></li>
+      <li><a href="#check">警告の見方と確認</a></li>
+      <li><a href="#files">ファイルの読み込み・書き出し</a></li>
+      <li><a href="#requests">希望休をフォームで集める（応用）</a></li>
+      <li><a href="#faq">困ったときは</a></li>
+      <li><a href="#notice">注意事項・ライセンス</a></li>
+    </ol>
+  </nav>
+
+  <main>
+
+  <!-- 1 -->
+  <section id="about">
+    <h2><span class="num">1</span>このアプリについて</h2>
+    <p>夜勤・明け・公休のサイクル、連勤の上限、職員ごとの希望や勤務条件をふまえて、1か月分のシフト案を自動で作るアプリです。二交代制・15名規模のワンフロアを基本に作っていますが、それより多い人数にも対応できます。</p>
+    <div class="tip"><b>設計の考え方：「機械が9割、人が1割」</b>
+      ワンクリックで全部を自動で完成させる作りにはしていません。6つのステップに分けて少しずつ配置し、<b>各ステップの後に担当者が画面で確認・修正</b>できるようにしています。最終的なシフトは、必ず人の目で確認してから使ってください。</div>
+    <table>
+      <tr><th>できること</th><td>夜勤の自動配置／明け・公休の展開／日勤・早番・遅番の振り分け／人数の均し／ルール違反の警告／希望休・NG勤務の反映／CSVでの読み込み・書き出し</td></tr>
+      <tr><th>守るルールの例</th><td>夜勤人数、夜勤明けの翌日の勤務制限、連勤上限、遅番の翌日の早番など勤務間隔の短い配置の回避、一緒に夜勤に入れない職員の組み合わせ（ペア禁止）、希望休の優先</td></tr>
+    </table>
+  </section>
+
+  <!-- 2 -->
+  <section id="before">
+    <h2><span class="num">2</span>はじめる前に</h2>
+    <h3>動作環境</h3>
+    <ul>
+      <li>パソコンの <b>Google Chrome</b> または <b>Microsoft Edge</b>（最新版）を推奨します。スマートフォンでも表示できますが、表が大きいためパソコンでの利用をおすすめします。</li>
+      <li><b>起動するときにインターネット接続が必要です。</b>画面の部品（React・Tailwind CSS・Babel）を外部の配信サイトから読み込むためです。入力した職員名やシフトが外部に送られることはありません。</li>
+    </ul>
+    <h3>アプリの開き方（2通り）</h3>
+    <table>
+      <tr><th>Web版</th><td>公開ページ（このページの「アプリを開く」）をそのまま使います。インストールは不要です。作者がアプリを更新すると、自動で新しい版になります。</td></tr>
+      <tr><th>ダウンロード版</th><td>GitHubのページで <span class="ui">Code</span> → <span class="ui">Download ZIP</span> を選び、展開した <span class="ui">index.html</span> をダブルクリックします。手元の版のまま変わりません。</td></tr>
+    </table>
+    <h3>データの保存先</h3>
+    <p>入力した内容は、<b>使っているパソコンのブラウザの中だけ</b>に自動で保存されます（職員設定、人数・時間の設定、各月のシフト表）。サーバーには送られません。</p>
+    <div class="warn"><b>ご注意ください</b>
+      <ul style="margin:4px 0 0; padding-left:20px">
+        <li><b>Web版とダウンロード版は、データが別々</b>です。同じパソコンでも引き継がれません。どちらか一方に決めて使ってください。</li>
+        <li>別のパソコンや別のブラウザには引き継がれません。移すときは「<a href="#files">設定保存・設定読込</a>」と「CSV」を使います。</li>
+        <li>ブラウザの閲覧データ（Cookieとサイトデータ）を削除すると、保存内容も消えます。<b>こまめに「設定保存」と「CSV」でバックアップ</b>してください。</li>
+        <li>共用パソコンでは、次に使う人にも内容が見えます。シークレットモードで使うと、ブラウザを閉じたときに消えます。</li>
+      </ul></div>
+  </section>
+
+  <!-- 3 -->
+  <section id="screen">
+    <h2><span class="num">3</span>画面の見方</h2>
+    <figure><img src="manual_img/main.jpg" alt="アプリのメイン画面" loading="lazy"><figcaption>メイン画面（職員名は架空です）</figcaption></figure>
+    <table>
+      <tr><th>場所</th><th>内容</th></tr>
+      <tr><td>いちばん上の帯</td><td><span class="ui">◀ 2026.11 ▶</span> で作成する年月を切り替えます。<span class="ui">公休: 9 日</span> はその月の公休日数です（初期値は31日の月が9日、それ以外は8日）。<span class="ui">📖 使い方</span> でこの説明書が開きます。</td></tr>
+      <tr><td>メッセージ欄</td><td>いま何をする段階か、処理の結果、うまくいかなかった理由などが表示されます。<b>迷ったらまずここを読んでください。</b></td></tr>
+      <tr><td>操作ボタン</td><td>ステップごとに表示が変わります。右側の <span class="ui">🔒 一括ロック</span> <span class="ui">🔓 全解除</span> <span class="ui">💾 CSV</span> <span class="ui">↩️ 戻る</span> <span class="ui">◀</span> <span class="ui">🗑️</span> はいつでも使えます（<a href="#edit">7章</a>）。</td></tr>
+      <tr><td>ステップ表示</td><td><span class="ui">0. 設定</span>〜<span class="ui">5. 早遅均</span> のうち、今いるステップが青く表示されます。</td></tr>
+      <tr><td>シフト表（左）</td><td>職員名と、その月の集計（<b>夜</b>＝夜勤回数、<b>休</b>＝公休数、<b>早</b>・<b>日</b>・<b>遅</b>＝早番・日勤・遅番の回数）。夜勤の職員には <span class="ui">🌙先</span> ボタンがあります。行は ⋮⋮ をドラッグして並び替えられます。</td></tr>
+      <tr><td>シフト表（右）</td><td>日付ごとの勤務。マスをクリックすると入力画面が開きます。土曜は青、日曜は赤の列です。</td></tr>
+      <tr><td>下の集計行</td><td>日ごとの人数（夜勤、早番、遅番、日勤、朝ピーク、夕方、指定時刻の在籍人数）。必要人数に足りない日は赤く表示されます。<span class="ui">🔍詳細</span> でその日の時間帯別の人数が見られます。</td></tr>
+    </table>
+  </section>
+
+  <!-- 4 -->
+  <section id="codes">
+    <h2><span class="num">4</span>勤務記号の一覧</h2>
+    <p>時刻は初期値です。<span class="ui">⏰ 時間設定</span> で施設に合わせて変えられます。</p>
+    <table>
+      <tr><th>記号</th><th>意味</th><th>時間（初期値）</th></tr>
+      <tr><td><span class="chip c-day">日</span></td><td>日勤</td><td>8:30〜17:00</td></tr>
+      <tr><td><span class="chip c-early">早</span></td><td>早番</td><td>7:30〜16:00</td></tr>
+      <tr><td><span class="chip c-early">早日</span></td><td>早番の時刻に出勤し、日勤の時刻まで勤務（早出）</td><td>7:30〜17:00</td></tr>
+      <tr><td><span class="chip c-late">遅</span></td><td>遅番</td><td>10:30〜19:00</td></tr>
+      <tr><td><span class="chip c-mix">日遅</span></td><td>日勤の時刻に出勤し、遅番の時刻まで勤務</td><td>8:30〜19:00</td></tr>
+      <tr><td><span class="chip c-night">当</span></td><td>夜勤（当直）</td><td>17:00〜翌9:00</td></tr>
+      <tr><td><span class="chip c-end">明</span></td><td>夜勤明け</td><td>―</td></tr>
+      <tr><td><span class="chip c-off">×</span></td><td>公休</td><td>―</td></tr>
+      <tr><td><span class="chip c-paid">有</span></td><td>有給休暇</td><td>―</td></tr>
+      <tr><td><span class="chip c-other">リ</span></td><td>リフレッシュ休暇（特別休暇）</td><td>―</td></tr>
+      <tr><td><span class="chip c-other">研修</span></td><td>研修</td><td>―</td></tr>
+    </table>
+  </section>
+
+  <!-- 5 -->
+  <section id="setup">
+    <h2><span class="num">5</span>最初の準備（初回のみ）</h2>
+    <p>はじめに職員と必要人数を登録します。一度登録すれば、翌月からはそのまま使えます。</p>
+
+    <h3>5-1　職員設定（<span class="ui">👥 職員設定</span>）</h3>
+    <figure><img src="manual_img/staff.jpg" alt="職員設定の画面" loading="lazy"><figcaption>職員設定。初期状態では見本として「職員A〜C」が入っています。</figcaption></figure>
+    <table>
+      <tr><th>項目</th><th>内容</th></tr>
+      <tr><td>名前</td><td>職員名。CSVの読み込みや希望休の取り込みでは、この名前で照合します。</td></tr>
+      <tr><td>グループ</td><td>
+        <b>夜勤 (A)</b>：夜勤に入る常勤職員<br>
+        <b>日勤 (B)</b>：日勤・早番・遅番に入る職員<br>
+        <b>日勤 (C:早遅なし)</b>：早番・遅番に入らない職員（時短勤務など）<br>
+        <b>夜勤 (D:当明当明 不可)</b>：夜勤に入るが、夜勤を続けて入れない職員（負担軽減のための夜勤）</td></tr>
+      <tr><td>夜勤回数</td><td>その職員の月の夜勤回数の目標です（夜勤グループのみ）。</td></tr>
+      <tr><td>ペア禁止</td><td><span class="ui">設定</span> から、同じ夜勤に一緒に入れない職員を選びます。</td></tr>
+      <tr><td>個別時間（非常勤等）</td><td>ONにすると、その職員だけの条件を設定できます。
+        <ul style="margin:4px 0 0; padding-left:20px">
+          <li><b>勤務時間</b>：開始・終了の時刻</li>
+          <li><b>人数換算</b>：必要人数を数えるとき、0.5人と1人のどちらで数えるか</li>
+          <li><b>公休数</b>：全体と違う公休日数にしたいとき（空欄なら全体の日数）</li>
+          <li><b>連勤上限</b>：指定なし、または1（連勤不可）〜4日</li>
+          <li><b>曜日固定</b>：曜日ごとに「出勤」「休み」を固定（クリックで 指定なし → 出勤 → 休み と切り替わります）</li>
+        </ul></td></tr>
+      <tr><td>追加・削除</td><td><span class="ui">＋ 新規追加</span> で職員を追加、行の右端の × で削除します。</td></tr>
+    </table>
+
+    <h3>5-2　必要人数（<span class="ui">📊 人数設定</span>）</h3>
+    <figure><img src="manual_img/targets.jpg" alt="必要人数設定の画面" loading="lazy"><figcaption>必要人数設定。曜日ごとに入力します。</figcaption></figure>
+    <table>
+      <tr><th>項目</th><th>内容</th></tr>
+      <tr><td>朝ピーク必要数</td><td>入浴などで人手が要る朝の時間帯に、在籍していてほしい人数（早番・日勤・早日・日遅の合計。遅番は含みません）。曜日ごとに設定します。</td></tr>
+      <tr><td>早番必要数</td><td>朝7:30から必要な早番の人数。人手が足りない日は、自動で「日遅」も使って調整します。</td></tr>
+      <tr><td>夕方必要数</td><td>19:00まで残る人数（遅番または日遅）。「夕方を早番より優先する」をONにすると、早番を減らしてでも夕方を確保します。</td></tr>
+      <tr><td>日勤必要数</td><td>曜日ごとの日勤の目安。人数の均し（偏りの調整）の基準になります。行事などの日は「特定日」で個別に設定できます。</td></tr>
+      <tr><td>夜勤必要数</td><td>1日あたりの夜勤人数（初期値2名）。</td></tr>
+    </table>
+
+    <h3>5-3　時間と表示（<span class="ui">⏰ 時間設定</span>）</h3>
+    <figure><img src="manual_img/times.jpg" alt="シフト時間設定の画面" loading="lazy"><figcaption>シフト時間と、表の下に在籍人数を表示する時刻（在籍スナップショット）を設定します。</figcaption></figure>
+    <p>「在籍スナップショット時刻」に9時・16時などを追加すると、その時刻に勤務している人数が表の下に表示されます。「警告ライン」の人数より少ないと赤く表示されます。</p>
+
+    <div class="tip"><b>設定はファイルに保存しておきましょう</b>
+      <span class="ui">⚙️💾 設定保存</span> で、職員・人数・時間の設定をファイル（JSON）に保存できます。パソコンを替えるときや、ブラウザのデータが消えたときは <span class="ui">⚙️📂 設定読込</span> で元に戻せます。作成中のシフト表は、設定を読み込んでも消えません。</div>
+  </section>
+
+  <!-- 6 -->
+  <section id="monthly">
+    <h2><span class="num">6</span>毎月の作成手順（6ステップ）</h2>
+    <p>画面上部の <span class="ui">次へ ▶</span> で順に進みます。<b>各ステップの後に表を見て、気になるところは手で直してから次へ進んでください。</b>前のステップに戻るときは <span class="ui">◀</span> を押します。</p>
+
+    <div class="stepcard">
+      <div class="head"><span class="pill">0. 設定</span><span class="title">その月の条件を入れる</span></div>
+      <ol class="steps">
+        <li>帯の <span class="ui">◀ ▶</span> で作成する年月を選び、<span class="ui">公休</span> の日数を確認します。</li>
+        <li><b>前月の情報を入れます。</b>前月のシフトをCSVで保存してある場合は <span class="ui">📁 先月読込</span>。連勤や夜勤明けを、月をまたいでチェックできるようになります。CSVがない場合は <span class="ui">🌙 前月夜勤</span> で、前月末日に夜勤だった職員を選びます（その職員は1日が「明」、2日が「公休」になります）。
+          <figure><img src="manual_img/prevnight.jpg" alt="前月夜勤者設定の画面" loading="lazy"><figcaption>前月夜勤者の設定</figcaption></figure></li>
+        <li><b>希望休や決まっている勤務を入れます。</b>表のマスをクリックして入力します（<a href="#edit">7章</a>）。希望休をGoogleフォームで集めている場合は <span class="ui">🙋📂 希望休読込</span> で一括で取り込めます（<a href="#requests">10章</a>）。</li>
+        <li><span class="ui">次へ ▶</span> を押します。</li>
+      </ol>
+    </div>
+
+    <div class="stepcard">
+      <div class="head"><span class="pill">1. 確保</span><span class="title">人手が足りなくなる日の日勤を先に確保する</span></div>
+      <p><span class="ui">🛡️ 不足日ブロック</span> を押すと、希望休などで人手が足りなくなりそうな日を見つけて、日勤を先に入れておきます。該当する日がなければ、メッセージ欄にそう表示されるので、そのまま次へ進みます。<span class="ui">🔀 再配置</span> で別の入れ方を試せます。</p>
+    </div>
+
+    <div class="stepcard">
+      <div class="head"><span class="pill">2. 夜勤</span><span class="title">夜勤を自動で配置する</span></div>
+      <p><span class="ui">🔄 自動</span> を押すと、夜勤人数・ロックしたマス・ペア禁止などのルールを守って夜勤を配置します。<span class="ui">🔀 再配置</span> を押すたびに、同じ品質の別パターンを探します（品質が下がる案しか見つからない場合は、配置を変えません）。</p>
+      <figure><img src="manual_img/step2.jpg" alt="夜勤を配置した状態" loading="lazy"><figcaption>ステップ2の後。「当」と「明」が入ります。</figcaption></figure>
+      <p>特定の職員の夜勤を先に決めたいときは、名前の左の <span class="ui">🌙先</span> を押すと、その職員の夜勤を目標回数まで優先して配置し、ロックします。</p>
+      <div class="note"><b>夜勤人数を満たせないとき</b>メッセージ欄と画面上部に、足りない日が表示されます。この場合、自動配置は適用されません。夜勤ができる職員数、前月の夜勤、ロックしたマス、公休やNGの設定を見直してください。</div>
+    </div>
+
+    <div class="stepcard">
+      <div class="head"><span class="pill">3. 日勤</span><span class="title">明け・公休・日勤をまとめて展開する</span></div>
+      <p><span class="ui">🤖 日勤一括配置</span> を押すと、夜勤明けと公休のサイクルを展開し、公休の数をそろえ、残りに日勤を入れ、日ごとの人数の偏りを均します。連勤上限のために公休が設定より多くなった職員がいる場合は、メッセージ欄に名前が表示されます。</p>
+    </div>
+
+    <div class="stepcard">
+      <div class="head"><span class="pill">4. 早遅</span><span class="title">早番・遅番を振り分ける</span></div>
+      <p><span class="ui">⚖️ 早遅</span> を押すと、日勤の中から早番・遅番（必要に応じて早日・日遅）を振り分けます。遅番の翌日に早番が入るような、勤務間隔の短い配置は避けます。</p>
+    </div>
+
+    <div class="stepcard">
+      <div class="head"><span class="pill">5. 早遅均</span><span class="title">早番・遅番を均して仕上げる</span></div>
+      <p><span class="ui">🔄 再早遅</span> を押すたびに、早番・遅番の別パターンを作ります。偏りが少ない案になるまで何度か試してください。</p>
+      <figure><img src="manual_img/done.jpg" alt="完成したシフト表" loading="lazy"><figcaption>完成したシフト表の例（職員名は架空）</figcaption></figure>
+    </div>
+
+    <h3>仕上げ</h3>
+    <ol class="steps">
+      <li>表全体を見て、<a href="#check">赤い枠や赤い集計</a>がないか確認し、必要なら手で直します。</li>
+      <li>確定した勤務は <span class="ui">🔒 一括ロック</span> で固定します（この後に自動処理をやり直しても動きません）。</li>
+      <li><span class="ui">💾 CSV</span> でシフト表を書き出し、保存します。翌月の「先月読込」にもこのファイルを使います。</li>
+    </ol>
+  </section>
+
+  <!-- 7 -->
+  <section id="edit">
+    <h2><span class="num">7</span>手で直す・確定する</h2>
+    <h3>マスをクリックして入力する</h3>
+    <figure><img src="manual_img/cell.jpg" alt="マスの設定画面" loading="lazy"><figcaption>マスをクリックすると開く設定画面</figcaption></figure>
+    <table>
+      <tr><th>① シフトの直接入力（確定）</th><td>押した勤務がそのマスに入ります。「空」でマスを空にします。</td></tr>
+      <tr><th>② 希望・NG設定（自動配置用）</th><td><b>希望シフト</b>：自動配置のとき最優先で入れる勤務（希望休など）。入ったマスには「希」の印が付きます。<br><b>NGシフト</b>：その日に入れない勤務（複数選べます）。マスに「NG」の印が付きます。<br>選んだら <span class="ui">条件を保存</span> を押します。</td></tr>
+    </table>
+    <h3>ロック（固定）</h3>
+    <p>マスの右上の 🔓 を押すと 🔒 になり、そのマスは自動処理で変わらなくなります。もう一度押すと解除できます。</p>
+    <table>
+      <tr><th><span class="ui">🔒 一括ロック</span></th><td>入力済みのマスをすべてロックします。</td></tr>
+      <tr><th><span class="ui">🔓 全解除</span></th><td>すべてのロックを解除します。</td></tr>
+      <tr><th><span class="ui">↩️ 戻る</span></th><td>直前の操作を取り消します。</td></tr>
+      <tr><th><span class="ui">◀</span></th><td>ひとつ前のステップに戻ります。</td></tr>
+      <tr><th><span class="ui">🗑️</span></th><td>その月のシフト表・ロック・希望/NGをすべて消して、最初からやり直します。<b>職員設定や人数設定は消えません。</b></td></tr>
+    </table>
+  </section>
+
+  <!-- 8 -->
+  <section id="check">
+    <h2><span class="num">8</span>警告の見方と確認</h2>
+    <figure><img src="manual_img/alert.jpg" alt="赤枠の警告" loading="lazy"><figcaption>夜勤明けの翌日に日勤を入れた例。マスが赤枠になり、公休数（休）もオレンジ色になります。</figcaption></figure>
+    <table>
+      <tr><th>表示</th><th>意味</th></tr>
+      <tr><td><span class="red-frame"></span> マスの赤枠</td><td>次のどれかに当たります。<br>・連勤が上限を超えている（個別の指定がなければ4連勤まで）<br>・5日の間に夜勤が3回以上入っている（夜勤過密）<br>・夜勤明けの翌日に出勤している（D群は夜勤も対象）</td></tr>
+      <tr><td>「夜」の数字が赤</td><td>夜勤回数が5回未満か9回以上、または目標回数と違う</td></tr>
+      <tr><td>「休」の数字がオレンジ</td><td>公休数が設定した日数と違う</td></tr>
+      <tr><td>下の集計行が赤</td><td>その日の人数が必要数に足りない</td></tr>
+    </table>
+    <h3>時間帯ごとの人数を見る</h3>
+    <figure><img src="manual_img/detail.jpg" alt="タイムライン画面" loading="lazy"><figcaption>集計行の <span class="ui">🔍詳細</span> で、その日の職員ごとの勤務時間と、時間帯別の合計人数が見られます。</figcaption></figure>
+  </section>
+
+  <!-- 9 -->
+  <section id="files">
+    <h2><span class="num">9</span>ファイルの読み込み・書き出し</h2>
+    <table>
+      <tr><th>ボタン</th><th>内容</th><th>形式</th></tr>
+      <tr><td><span class="ui">💾 CSV</span></td><td>表示中の月のシフト表を書き出します（ファイル名：シフト表_2026年11月.csv など）。Excelで開けます。</td><td>CSV</td></tr>
+      <tr><td><span class="ui">📁 先月読込</span></td><td>前月のCSVを読み込み、月をまたいだ連勤・夜勤のチェックに使います。前月末日が夜勤の職員は、自動で「前月夜勤」に設定されます。</td><td>CSV</td></tr>
+      <tr><td><span class="ui">📁 当月読込</span></td><td>当月のCSVを読み込みます。<b>入力済みのマスは自動でロック</b>されます（全解除で外せます）。<b>職員の一覧もCSVの内容に置き換わり、CSVにない職員は職員設定から外れます。</b>同じ名前の職員は、個別の設定が引き継がれます。</td><td>CSV</td></tr>
+      <tr><td><span class="ui">⚙️💾 設定保存</span></td><td>職員・人数・時間の設定を保存します。</td><td>JSON</td></tr>
+      <tr><td><span class="ui">⚙️📂 設定読込</span></td><td>保存した設定で上書きします。作成中のシフト表は残り、同じ名前の職員は引き継がれます。</td><td>JSON</td></tr>
+    </table>
+    <div class="note"><b>CSVの形式</b>1行目が「氏名,グループ,1(日),2(月),…」、2行目以降が職員ごとの勤務です。このアプリで書き出したCSVをそのまま使うのが確実です。自分で作る場合は同じ形式にしてください。</div>
+    <div class="warn"><b>個人情報の取り扱い</b>書き出したCSVや設定ファイルには、職員の実名が入っています。施設の情報管理のルールに従って保管し、インターネット上（GitHubなど）には公開しないでください。</div>
+  </section>
+
+  <!-- 10 -->
+  <section id="requests">
+    <h2><span class="num">10</span>希望休をフォームで集める（応用）</h2>
+    <p>Googleフォームで集めた希望休・希望勤務・NG勤務を、まとめて取り込むこともできます。</p>
+    <ol class="steps">
+      <li><span class="ui">🙋💾 名簿書出</span> で職員名簿のCSVを書き出し、集計用のGoogleスプレッドシートの「職員マスタ」シートに貼り付けます（フォームの氏名の選択肢に使います）。</li>
+      <li>職員がフォームで希望を入力します。</li>
+      <li>集計用のスクリプト（Google Apps Script）が書き出したJSONファイルを、<span class="ui">🙋📂 希望休読込</span> で読み込みます。</li>
+      <li>取り込み結果（職員登録がない氏名、未提出の職員、既存のシフトを上書きした箇所など）が画面に一覧で表示されるので、確認します。</li>
+    </ol>
+    <div class="note"><b>補足</b>フォームと集計スクリプトは、施設のGoogleアカウントで別に用意する必要があります（この公開版には含まれていません）。取り込むと、ファイルに含まれる職員の「希望・NG設定」が置き換わります。職員設定・人数設定・時間設定には影響しません。</div>
+  </section>
+
+  <!-- 11 -->
+  <section id="faq">
+    <h2><span class="num">11</span>困ったときは</h2>
+    <details><summary>夜勤人数を満たせない、と表示される</summary>
+      夜勤ができる職員に対して、必要な夜勤の数が多すぎるか、公休・NG・ロック・ペア禁止などの条件が重なっています。メッセージに表示された不足日の前後で、希望休やNGを確認し、ロックを外す、夜勤回数の目標を見直す、などを試してください。</details>
+    <details><summary>条件の一部をゆるめたシフトになってしまう</summary>
+      職員数が最小限のときや、希望休・勤務指定が特定の期間に集中したときは、すべての条件を満たすシフトが物理的に組めないことがあります。その場合は条件の一部をゆるめた案が出ます。どの条件を優先するかは、担当者が判断して手で調整してください。</details>
+    <details><summary>公休が設定より多い職員がいる</summary>
+      連勤上限を守るために、休みを増やさざるを得なかった職員です。ステップ3のメッセージに名前が表示されます。連勤上限や曜日固定の設定、日勤の必要数を見直すか、手で調整してください。</details>
+    <details><summary>別のパターンを見たい</summary>
+      ステップ2の <span class="ui">🔀 再配置</span>、ステップ5の <span class="ui">🔄 再早遅</span> を押すたびに別のパターンを探します。気に入った部分は 🔒 でロックしてから押すと、その部分は残ります。</details>
+    <details><summary>操作を間違えた</summary>
+      <span class="ui">↩️ 戻る</span> で直前の操作を取り消せます。最初からやり直す場合は <span class="ui">🗑️</span> を押します（職員設定などは残ります）。</details>
+    <details><summary>入力したデータが消えた</summary>
+      ブラウザの閲覧データを削除した、別のブラウザで開いた、Web版とダウンロード版を取り違えた、のいずれかが考えられます。保存しておいた設定ファイルとCSVを、<span class="ui">⚙️📂 設定読込</span> と <span class="ui">📁 当月読込</span> で読み込んでください。</details>
+    <details><summary>別のパソコンで続きを作りたい</summary>
+      元のパソコンで <span class="ui">⚙️💾 設定保存</span> と <span class="ui">💾 CSV</span> を行い、そのファイルを新しいパソコンで読み込みます。ファイルには実名が入っているので、施設のルールに沿って受け渡してください。</details>
+    <details><summary>画面が真っ白で表示されない</summary>
+      起動時にインターネットにつながっていない可能性があります。接続を確認して、ページを再読み込みしてください。施設のネットワークで外部サイトが制限されている場合は、情報システムの担当者にご相談ください。</details>
+  </section>
+
+  <!-- 12 -->
+  <section id="notice">
+    <h2><span class="num">12</span>注意事項・ライセンス</h2>
+    <ul>
+      <li>作成されたシフトは<b>シフト案</b>です。必ず担当者が内容を確認し、施設の規程や労務のルールに沿っていることを確かめたうえで使ってください。</li>
+      <li>非営利目的に限り、無償で利用・改変できます。有償での販売や商業的な再配布は禁止します（詳しくは同梱の LICENSE をご覧ください）。</li>
+      <li>本ソフトウェアの使用により生じたいかなる損害についても、著作権者は責任を負いません。</li>
+    </ul>
+    <p style="color:var(--gray); font-size:14px">第37回全国介護老人保健施設大会 栃木（2026年10月）演題「現場発シフト自動作成アプリの開発と実践」で紹介したアプリです。</p>
+  </section>
+
+  </main>
+</div>
+
+<footer>シフト作成アプリ 取扱説明書（試験運用版 v.21 対応）　<a href="index.html">アプリを開く</a></footer>
+<a class="backtop" href="#top">↑ 目次へ</a>
+</body>
+</html>
