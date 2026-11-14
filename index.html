@@ -244,6 +244,14 @@ function App() {
     return [...DEFAULT_QUALIFICATIONS];
   });
   const [newQualification, setNewQualification] = useState("");
+  const [nightRequiredQuals, setNightRequiredQuals] = useState(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem("night_required_quals_v1") || "[]");
+      return Array.isArray(saved) ? saved.filter((q) => typeof q === "string" && q) : [];
+    } catch (e) {
+      return [];
+    }
+  });
   const [nightShiftCount, setNightShiftCount] = useState(() => {
     const saved = localStorage.getItem("night_shift_count_v1");
     return saved ? parseInt(saved, 10) : 2;
@@ -354,6 +362,7 @@ function App() {
     const users = staffData.filter((st) => st.qualification === name);
     if (users.length > 0 && !confirm(`職種「${name}」は${users.length}名に設定されています。削除すると、その職員の職種は「未設定」になります。削除しますか？`)) return;
     setQualificationOptions(qualificationOptions.filter((q) => q !== name));
+    setNightRequiredQuals((prev) => prev.filter((q) => q !== name));
     if (users.length > 0) {
       setStaffData(staffData.map((st) => st.qualification === name ? { ...st, qualification: "" } : st));
     }
@@ -361,6 +370,18 @@ function App() {
   useEffect(() => {
     localStorage.setItem("night_shift_count_v1", nightShiftCount.toString());
   }, [nightShiftCount]);
+  useEffect(() => {
+    try {
+      localStorage.setItem("night_required_quals_v1", JSON.stringify(nightRequiredQuals));
+    } catch (e) {
+    }
+  }, [nightRequiredQuals]);
+  const activeNightQuals = nightRequiredQuals.filter((q) => qualificationOptions.includes(q));
+  const isNightQualStaff = (st) => !!st && activeNightQuals.includes(st.qualification);
+  const nightHasQual = (day, sched) => activeNightQuals.length === 0 || staffData.some((st) => {
+    var _a2;
+    return ((_a2 = sched[st.id]) == null ? void 0 : _a2[day]) === SHIFT_TYPES.NIGHT && isNightQualStaff(st);
+  });
   useEffect(() => {
     localStorage.setItem("shift_times_v1", JSON.stringify(shiftTimes));
   }, [shiftTimes]);
@@ -660,6 +681,7 @@ function App() {
       eveningTarget,
       eveningOverEarly,
       qualificationOptions,
+      nightRequiredQuals,
       nightShiftCount,
       specificDayTargets,
       specificMorningTargets,
@@ -750,6 +772,9 @@ function App() {
         if (typeof parsed.eveningOverEarly === "boolean") {
           setEveningOverEarly(parsed.eveningOverEarly);
           countApplied = true;
+        }
+        if (Array.isArray(parsed.nightRequiredQuals)) {
+          setNightRequiredQuals(parsed.nightRequiredQuals.filter((q) => typeof q === "string" && q));
         }
         if (Array.isArray(parsed.qualificationOptions)) {
           const extra = parsed.qualificationOptions.filter((q) => typeof q === "string" && q.trim() && !DEFAULT_QUALIFICATIONS.includes(q));
@@ -1305,6 +1330,7 @@ function App() {
     let candidates = [];
     for (let d = 1; d <= daysInMonth; d++) {
       if (nightSlotsAvail[d] <= 0) continue;
+      if (activeNightQuals.length > 0 && !isNightQualStaff(staff) && nightSlotsAvail[d] <= 1 && !nightHasQual(d, newSchedule)) continue;
       if (newSchedule[staffId][d] !== SHIFT_TYPES.NONE && newSchedule[staffId][d] !== SHIFT_TYPES.NIGHT) {
         if (isCellLocked(staffId, d, newSchedule)) continue;
       }
@@ -1570,8 +1596,9 @@ function App() {
       });
       return deficit;
     };
-    const VIO = { ng: 1e3, pair: 800, dayfill: 300, prev2: 200, recent6: 200, nextnext: 150, target: 120 };
+    const VIO = { qual: 5e3, ng: 1e3, pair: 800, dayfill: 300, prev2: 200, recent6: 200, nextnext: 150, target: 120 };
     const VIO_LABELS = {
+      qual: "必須職種のいない夜勤",
       ng: "NG指定の夜勤",
       pair: "禁止ペアの同日夜勤",
       prev2: "前々日が夜勤",
@@ -1605,8 +1632,25 @@ function App() {
       return n;
     };
     const allowsNightSetChain = (s) => s.group !== "D";
+    const qualActive = activeNightQuals.length > 0 && groupNight.some(isNightQualStaff);
+    let qualRelax = false;
+    const qualBlocks = (s, d, sched) => {
+      if (!qualActive || qualRelax || isNightQualStaff(s)) return false;
+      const others = groupNight.filter((x) => x.id !== s.id && sched[x.id][d] === SHIFT_TYPES.NIGHT);
+      if (others.some(isNightQualStaff)) return false;
+      return nightShiftCount - others.length - 1 < 1;
+    };
+    const qualShortDaysOf = (sched) => {
+      if (!qualActive) return [];
+      const arr = [];
+      for (let d = 1; d <= daysInMonth; d++) {
+        if (countNightOnDay(d, sched) > 0 && !groupNight.some((x) => sched[x.id][d] === SHIFT_TYPES.NIGHT && isNightQualStaff(x))) arr.push(d);
+      }
+      return arr;
+    };
     const isFeasible = (s, d, sched, relaxConsec) => {
       if (!isAbsoluteHard(s, d, sched)) return false;
+      if (qualBlocks(s, d, sched)) return false;
       const prevShift = getShiftSafe(s.id, d - 1, sched);
       if (prevShift === SHIFT_TYPES.NIGHT) return false;
       const nnd2 = d + 2;
@@ -1891,7 +1935,7 @@ function App() {
       const explicitMismatch = (sc) => groupNight.reduce((sum, s) => hasTarget(s) ? sum + Math.abs(countFor(s, sc) - nightTargets[s.id]) : sum, 0);
       const softCounts = (sc) => {
         const ev2 = evaluate(sc);
-        return ev2.cat.ng + ev2.cat.pair + ev2.cat.prev2 + ev2.cat.recent6 + ev2.cat.nextnext + ev2.cat.dayfill;
+        return ev2.cat.qual + ev2.cat.ng + ev2.cat.pair + ev2.cat.prev2 + ev2.cat.recent6 + ev2.cat.nextnext + ev2.cat.dayfill;
       };
       let best2 = JSON.parse(JSON.stringify(sched));
       let bestMismatch = explicitMismatch(best2);
@@ -1966,7 +2010,8 @@ function App() {
         if (short > 0) shortageByDay.push({ day: d, short });
         unfilled += short;
       }
-      const cat = { ng: 0, pair: 0, prev2: 0, recent6: 0, nextnext: 0, dayfill: 0, target: 0 };
+      const qualShortDays = qualShortDaysOf(sched);
+      const cat = { qual: qualShortDays.length, ng: 0, pair: 0, prev2: 0, recent6: 0, nextnext: 0, dayfill: 0, target: 0 };
       for (let d = 1; d <= daysInMonth; d++) {
         groupNight.forEach((s) => {
           if (sched[s.id][d] === SHIFT_TYPES.NIGHT) {
@@ -1996,9 +2041,9 @@ function App() {
           targetMismatches.push({ name: s.name, target: t, actual: c });
         }
       });
-      const softTotal = cat.ng * VIO.ng + cat.pair * VIO.pair + cat.prev2 * VIO.prev2 + cat.recent6 * VIO.recent6 + cat.nextnext * VIO.nextnext + cat.dayfill * VIO.dayfill + cat.target * VIO.target;
+      const softTotal = cat.qual * VIO.qual + cat.ng * VIO.ng + cat.pair * VIO.pair + cat.prev2 * VIO.prev2 + cat.recent6 * VIO.recent6 + cat.nextnext * VIO.nextnext + cat.dayfill * VIO.dayfill + cat.target * VIO.target;
       const score = unfilled * 1e8 + softTotal + balance;
-      return { unfilled, shortageByDay, cat, softTotal, balance, targetMismatches, score };
+      return { unfilled, shortageByDay, cat, softTotal, balance, targetMismatches, score, qualShortDays };
     };
     const DEADLINE = Date.now() + (isRetry ? 6e3 : 2500);
     const MAX_PATTERNS = 40;
@@ -2119,7 +2164,8 @@ function App() {
                 }
                 const okCount = countNightOnDay(X - 2, sched) === nightShiftCount;
                 const improved = dayFloorAvail(X, sched) > before;
-                if (okCount && improved) {
+                const qualOk = qualRelax || !qualActive || isNightQualStaff(Q) || !isNightQualStaff(R) || groupNight.some((x) => sched[x.id][X - 2] === SHIFT_TYPES.NIGHT && isNightQualStaff(x));
+                if (okCount && improved && qualOk) {
                   applied = true;
                   break;
                 }
@@ -2181,7 +2227,7 @@ function App() {
     };
     const SOFT_TOLERANCE = 400;
     const blRef = nightBaselineRef.current;
-    const acceptable = (e) => !blRef || e.cat.target <= blRef.target && e.cat.ng <= blRef.ng && e.cat.pair <= blRef.pair && e.softTotal <= blRef.softTotal + SOFT_TOLERANCE;
+    const acceptable = (e) => !blRef || e.cat.target <= blRef.target && (e.cat.qual || 0) <= (blRef.qual || 0) && e.cat.ng <= blRef.ng && e.cat.pair <= blRef.pair && e.softTotal <= blRef.softTotal + SOFT_TOLERANCE;
     if (isRetry) {
       const atLeastAsGood = acceptable;
       let chosen = null;
@@ -2205,6 +2251,12 @@ function App() {
       }
     } else if (best) {
       best.ev = finalize(best.sched);
+    }
+    if (best && qualActive && best.ev.unfilled > 0) {
+      qualRelax = true;
+      const relaxedSched = repairSchedule(best.sched, 4242 + variant);
+      const relaxedEv = finalize(relaxedSched);
+      if (relaxedEv.unfilled < best.ev.unfilled) best = { sched: relaxedSched, ev: relaxedEv };
     }
     const ev = best.ev;
     if (ev.unfilled > 0) {
@@ -2234,6 +2286,7 @@ function App() {
     if (!isRetry) {
       nightBaselineRef.current = {
         target: ev.cat.target,
+        qual: ev.cat.qual,
         ng: ev.cat.ng,
         pair: ev.cat.pair,
         softTotal: ev.softTotal
@@ -2249,9 +2302,12 @@ function App() {
       shortageByDay: [],
       items,
       targetMismatches: ev.targetMismatches,
+      qualShortDays: ev.qualShortDays || [],
       hardFail: false
     });
-    if (variantExhausted) {
+    if (ev.qualShortDays && ev.qualShortDays.length > 0) {
+      setMessage({ text: `Step 2: 夜勤人数は確保しましたが、${activeNightQuals.join("・")}のいない夜勤が残りました → ${ev.qualShortDays.map((d) => d + "日").join("、")}。${activeNightQuals.join("・")}の夜勤可能な人数・希望休・ロックを見直すか、該当日を手動で調整してください。`, type: "error" });
+    } else if (variantExhausted) {
       setMessage({ text: "Step 2: これ以上の別パターンは見つかりませんでした（制約が厳しく、同じ品質の解が他にありません）。配置は現状のままです。ロックや希望・NG、公休の見直しで選択肢が増えます。", type: "info" });
     } else if (ev.targetMismatches.length > 0) {
       const detail = ev.targetMismatches.map((m) => `${m.name}(目標${m.target}→実績${m.actual})`).join("、");
@@ -3479,8 +3535,13 @@ function App() {
     const early = countOnDay(c.date, [SHIFT_TYPES.EARLY, SHIFT_TYPES.EARLY_DAY]);
     const morning = getMorningSupply(c.date, schedule);
     const evening = countOnDay(c.date, [SHIFT_TYPES.LATE, SHIFT_TYPES.DAY_LATE]);
+    const nightQualCnt = staffData.filter((s) => {
+      var _a2;
+      return ((_a2 = schedule[s.id]) == null ? void 0 : _a2[c.date]) === SHIFT_TYPES.NIGHT && isNightQualStaff(s);
+    }).length;
     const items = [
       { key: "night", label: "夜勤", cnt: night, need: nightShiftCount, ok: night === nightShiftCount },
+      ...activeNightQuals.length > 0 ? [{ key: "nightQual", label: `夜勤の${activeNightQuals.join("・")}`, cnt: nightQualCnt, need: 1, ok: nightQualCnt >= 1 }] : [],
       { key: "early", label: "早番", cnt: early, need: getEarlyTargetForDay(c.day), ok: early >= getEarlyTargetForDay(c.day) },
       { key: "morning", label: "朝ピーク", cnt: morning, need: getMorningTargetForDay(c.date, c.day), ok: morning >= getMorningTargetForDay(c.date, c.day) },
       { key: "evening", label: "夕方", cnt: evening, need: eveningTarget, ok: evening >= eveningTarget }
@@ -3700,7 +3761,7 @@ function App() {
       value: requiredOffDays,
       onChange: (e) => setRequiredOffDays(Number(e.target.value))
     }
-  ), /* @__PURE__ */ React.createElement("span", null, "日")), /* @__PURE__ */ React.createElement("button", { onClick: () => setUiMode("mobile"), className: "ml-auto px-2 py-1 rounded bg-slate-700 hover:bg-slate-600 text-xs sm:text-sm whitespace-nowrap", title: "スマホ向けの表示に切り替え" }, "📱", /* @__PURE__ */ React.createElement("span", { className: "hidden sm:inline" }, " スマホ表示")), /* @__PURE__ */ React.createElement("button", { onClick: () => setIsMenuOpen(!isMenuOpen), className: "sm:hidden p-1 text-xl font-bold ml-1 leading-none" }, isMenuOpen ? "✕" : "≡")), /* @__PURE__ */ React.createElement("div", { className: `bg-white border-b shadow-sm transition-all duration-300 overflow-hidden ${isMenuOpen ? "max-h-96" : "max-h-[88px] sm:max-h-none"} shrink-0 z-20` }, /* @__PURE__ */ React.createElement("div", { className: "p-2 sm:p-3 flex flex-col gap-2 sm:gap-3" }, /* @__PURE__ */ React.createElement("div", { className: `w-full px-2 py-1.5 sm:px-3 sm:py-2 rounded-lg flex items-center gap-1 sm:gap-2 text-[10px] sm:text-sm font-medium ${message.type === "error" ? "bg-red-50 text-red-700 border border-red-200" : message.type === "success" ? "bg-green-50 text-green-700 border border-green-200" : "bg-blue-50 text-blue-700 border border-blue-200"}` }, /* @__PURE__ */ React.createElement("span", { className: "text-sm sm:text-lg shrink-0" }, "ℹ️"), /* @__PURE__ */ React.createElement("span", { className: "truncate" }, message.text)), nightViolations && nightViolations.hardFail && /* @__PURE__ */ React.createElement("div", { className: "w-full px-2 py-1.5 sm:px-3 sm:py-2 rounded-lg bg-red-50 border border-red-400 text-red-800 text-[10px] sm:text-sm" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between mb-1" }, /* @__PURE__ */ React.createElement("span", { className: "font-bold" }, "⛔ 夜勤人数を充足できません（自動配置は適用されていません）"), /* @__PURE__ */ React.createElement("button", { onClick: () => setNightViolations(null), className: "text-red-600 hover:text-red-900 font-bold px-1" }, "✕")), /* @__PURE__ */ React.createElement("div", { className: "mb-1" }, "不足合計：", /* @__PURE__ */ React.createElement("span", { className: "font-bold" }, nightViolations.unfilled), " 枠"), /* @__PURE__ */ React.createElement("div", { className: "mb-0.5 font-semibold" }, "不足している日："), /* @__PURE__ */ React.createElement("div", { className: "flex flex-wrap gap-1" }, nightViolations.shortageByDay && nightViolations.shortageByDay.map((x, i) => /* @__PURE__ */ React.createElement("span", { key: i, className: "inline-block px-1.5 py-0.5 rounded bg-red-100 border border-red-300" }, x.day, "日（不足", x.short, "名）"))), /* @__PURE__ */ React.createElement("div", { className: "mt-1.5 text-red-700" }, "※ 夜勤可能な職員数・前月夜勤・ロック枠・公休/NG等の制約を見直してください。")), nightViolations && !nightViolations.hardFail && nightViolations.targetMismatches && nightViolations.targetMismatches.length > 0 && /* @__PURE__ */ React.createElement("div", { className: "w-full px-2 py-1.5 sm:px-3 sm:py-2 rounded-lg bg-orange-50 border border-orange-300 text-orange-800 text-[10px] sm:text-sm" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between mb-1" }, /* @__PURE__ */ React.createElement("span", { className: "font-bold" }, "⚠️ 夜勤回数の目標未達（人数・ロックは厳守済）"), /* @__PURE__ */ React.createElement("button", { onClick: () => setNightViolations(null), className: "text-orange-600 hover:text-orange-900 font-bold px-1" }, "✕")), /* @__PURE__ */ React.createElement("div", { className: "flex flex-wrap gap-1" }, nightViolations.targetMismatches.map((m, i) => /* @__PURE__ */ React.createElement("span", { key: i, className: "inline-block px-1.5 py-0.5 rounded bg-orange-100 border border-orange-300" }, m.name, "（目標", m.target, "→実績", m.actual, "）")))), nightViolations && !nightViolations.hardFail && nightViolations.items && nightViolations.items.length > 0 && /* @__PURE__ */ React.createElement("div", { className: "w-full px-2 py-1.5 sm:px-3 sm:py-2 rounded-lg bg-amber-50 border border-amber-300 text-amber-800 text-[10px] sm:text-sm" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between mb-1" }, /* @__PURE__ */ React.createElement("span", { className: "font-bold" }, "⚠️ 夜勤生成：soft条件の違反内訳（夜勤人数・ロックは厳守済）"), /* @__PURE__ */ React.createElement("button", { onClick: () => setNightViolations(null), className: "text-amber-600 hover:text-amber-900 font-bold px-1" }, "✕")), /* @__PURE__ */ React.createElement("ul", { className: "space-y-0.5" }, nightViolations.items.map((it, i) => /* @__PURE__ */ React.createElement("li", { key: i, className: "flex justify-between" }, /* @__PURE__ */ React.createElement("span", null, "・", it.label), /* @__PURE__ */ React.createElement("span", null, it.count, " 件"))))), requestReport && /* @__PURE__ */ React.createElement("div", { className: "w-full px-2 py-1.5 sm:px-3 sm:py-2 rounded-lg bg-rose-50 border border-rose-300 text-rose-900 text-[10px] sm:text-sm" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between mb-1" }, /* @__PURE__ */ React.createElement("span", { className: "font-bold" }, "🙋 希望休の取り込み結果", requestReport.ym ? `（${requestReport.ym}分）` : "", "：", requestReport.staffCount, "名 / ", requestReport.applied, "件を反映"), /* @__PURE__ */ React.createElement("button", { onClick: () => setRequestReport(null), className: "text-rose-600 hover:text-rose-900 font-bold px-1" }, "✕")), /* @__PURE__ */ React.createElement("ul", { className: "space-y-0.5" }, requestReport.unknown.length > 0 && /* @__PURE__ */ React.createElement("li", null, "❌ ", /* @__PURE__ */ React.createElement("span", { className: "font-bold" }, "職員登録がない氏名（未反映）"), "：", requestReport.unknown.join("、")), requestReport.missing.length > 0 && /* @__PURE__ */ React.createElement("li", null, "📭 ", /* @__PURE__ */ React.createElement("span", { className: "font-bold" }, "未提出"), "：", requestReport.missing.join("、")), requestReport.conflicts.length > 0 && /* @__PURE__ */ React.createElement("li", null, "⚠️ ", /* @__PURE__ */ React.createElement("span", { className: "font-bold" }, "既存のシフトを上書き"), "：", requestReport.conflicts.join("、")), requestReport.outOfRange.length > 0 && /* @__PURE__ */ React.createElement("li", null, "⚠️ ", /* @__PURE__ */ React.createElement("span", { className: "font-bold" }, "当月の範囲外（無視）"), "：", requestReport.outOfRange.join("、")), requestReport.warnings.map((w, i) => /* @__PURE__ */ React.createElement("li", { key: i }, "🔎 ", w)), requestReport.unknown.length === 0 && requestReport.missing.length === 0 && requestReport.conflicts.length === 0 && requestReport.outOfRange.length === 0 && requestReport.warnings.length === 0 && /* @__PURE__ */ React.createElement("li", null, "✅ 全職員から回答があり、問題は見つかりませんでした。"))), /* @__PURE__ */ React.createElement("div", { className: "flex w-full justify-between gap-2 overflow-x-auto sm:overflow-visible hide-scrollbar sm:flex-wrap" }, /* @__PURE__ */ React.createElement("div", { className: "flex gap-1.5 sm:gap-2 items-center flex-nowrap shrink-0 sm:flex-wrap sm:shrink sm:min-w-0" }, step === 0 && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("button", { onClick: () => prevMonthFileInputRef.current.click(), className: "flex items-center gap-1 px-2 py-1.5 sm:px-3 sm:py-2 bg-purple-50 border border-purple-200 text-purple-700 rounded hover:bg-purple-100 whitespace-nowrap text-xs sm:text-sm font-bold" }, "📁 ", /* @__PURE__ */ React.createElement("span", { className: "hidden sm:inline" }, "先月読込"), /* @__PURE__ */ React.createElement("span", { className: "sm:hidden" }, "先月")), /* @__PURE__ */ React.createElement("input", { type: "file", accept: ".csv", ref: prevMonthFileInputRef, onChange: handleImportPrevMonthCSV, style: { display: "none" } }), /* @__PURE__ */ React.createElement("button", { onClick: () => fileInputRef.current.click(), className: "flex items-center gap-1 px-2 py-1.5 sm:px-3 sm:py-2 bg-green-50 border border-green-200 text-green-700 rounded hover:bg-green-100 whitespace-nowrap text-xs sm:text-sm font-bold" }, "📁 ", /* @__PURE__ */ React.createElement("span", { className: "hidden sm:inline" }, "当月読込"), /* @__PURE__ */ React.createElement("span", { className: "sm:hidden" }, "当月")), /* @__PURE__ */ React.createElement("input", { type: "file", accept: ".csv", ref: fileInputRef, onChange: handleImportCSV, style: { display: "none" } }), /* @__PURE__ */ React.createElement("button", { onClick: () => setIsStaffModalOpen(true), className: "flex items-center gap-1 px-2 py-1.5 sm:px-3 sm:py-2 bg-gray-100 border border-gray-300 text-gray-700 rounded hover:bg-gray-200 whitespace-nowrap text-xs sm:text-sm font-bold" }, "👥 ", /* @__PURE__ */ React.createElement("span", { className: "hidden sm:inline" }, "職員設定"), /* @__PURE__ */ React.createElement("span", { className: "sm:hidden" }, "職員")), /* @__PURE__ */ React.createElement("button", { onClick: () => setIsDayTargetModalOpen(true), className: "flex items-center gap-1 px-2 py-1.5 sm:px-3 sm:py-2 bg-blue-50 border border-blue-200 text-blue-700 rounded hover:bg-blue-100 whitespace-nowrap text-xs sm:text-sm font-bold" }, "📊 ", /* @__PURE__ */ React.createElement("span", { className: "hidden sm:inline" }, "人数設定"), /* @__PURE__ */ React.createElement("span", { className: "sm:hidden" }, "人数")), /* @__PURE__ */ React.createElement("button", { onClick: () => setIsShiftTimeModalOpen(true), className: "flex items-center gap-1 px-2 py-1.5 sm:px-3 sm:py-2 bg-yellow-50 border border-yellow-200 text-yellow-700 rounded hover:bg-yellow-100 whitespace-nowrap text-xs sm:text-sm font-bold" }, "⏰ ", /* @__PURE__ */ React.createElement("span", { className: "hidden sm:inline" }, "時間設定"), /* @__PURE__ */ React.createElement("span", { className: "sm:hidden" }, "時間")), /* @__PURE__ */ React.createElement("button", { onClick: () => setIsPrevNightModalOpen(true), className: "flex items-center gap-1 px-2 py-1.5 sm:px-3 sm:py-2 bg-slate-100 border border-slate-300 text-slate-700 rounded hover:bg-slate-200 whitespace-nowrap text-xs sm:text-sm font-bold" }, "🌙 ", /* @__PURE__ */ React.createElement("span", { className: "hidden sm:inline" }, "前月夜勤"), /* @__PURE__ */ React.createElement("span", { className: "sm:hidden" }, "前月夜")), /* @__PURE__ */ React.createElement("button", { onClick: handleExportSettings, className: "flex items-center gap-1 px-2 py-1.5 sm:px-3 sm:py-2 bg-indigo-50 border border-indigo-200 text-indigo-700 rounded hover:bg-indigo-100 whitespace-nowrap text-xs sm:text-sm font-bold", title: "職員・人数・時間の設定をファイルに保存" }, "⚙️💾 ", /* @__PURE__ */ React.createElement("span", { className: "hidden sm:inline" }, "設定保存")), /* @__PURE__ */ React.createElement("button", { onClick: () => settingsFileInputRef.current.click(), className: "flex items-center gap-1 px-2 py-1.5 sm:px-3 sm:py-2 bg-indigo-50 border border-indigo-200 text-indigo-700 rounded hover:bg-indigo-100 whitespace-nowrap text-xs sm:text-sm font-bold", title: "保存した設定ファイルを読み込む" }, "⚙️📂 ", /* @__PURE__ */ React.createElement("span", { className: "hidden sm:inline" }, "設定読込")), /* @__PURE__ */ React.createElement("input", { type: "file", accept: ".json,application/json", ref: settingsFileInputRef, onChange: handleImportSettings, style: { display: "none" } }), /* @__PURE__ */ React.createElement("button", { onClick: () => requestsFileInputRef.current.click(), className: "flex items-center gap-1 px-2 py-1.5 sm:px-3 sm:py-2 bg-rose-50 border border-rose-200 text-rose-700 rounded hover:bg-rose-100 whitespace-nowrap text-xs sm:text-sm font-bold", title: "Googleフォームで集めた希望休を一括取り込み" }, "🙋📂 ", /* @__PURE__ */ React.createElement("span", { className: "hidden sm:inline" }, "希望休読込"), /* @__PURE__ */ React.createElement("span", { className: "sm:hidden" }, "希望休")), /* @__PURE__ */ React.createElement("input", { type: "file", accept: ".json,application/json", ref: requestsFileInputRef, onChange: handleImportRequests, style: { display: "none" } }), /* @__PURE__ */ React.createElement("button", { onClick: () => setIsContactOpen(true), className: "sm:hidden flex items-center gap-1 px-2 py-1.5 bg-sky-50 border border-sky-200 text-sky-800 rounded whitespace-nowrap text-xs font-bold" }, "✉️ 問い合わせ先"), /* @__PURE__ */ React.createElement("button", { onClick: handleExportStaffNames, className: "flex items-center gap-1 px-2 py-1.5 sm:px-3 sm:py-2 bg-rose-50 border border-rose-200 text-rose-700 rounded hover:bg-rose-100 whitespace-nowrap text-xs sm:text-sm font-bold", title: "職員名簿CSVを書き出す（フォームの氏名プルダウン用）" }, "🙋💾 ", /* @__PURE__ */ React.createElement("span", { className: "hidden sm:inline" }, "名簿書出")), /* @__PURE__ */ React.createElement("button", { onClick: () => {
+  ), /* @__PURE__ */ React.createElement("span", null, "日")), /* @__PURE__ */ React.createElement("button", { onClick: () => setUiMode("mobile"), className: "ml-auto px-2 py-1 rounded bg-slate-700 hover:bg-slate-600 text-xs sm:text-sm whitespace-nowrap", title: "スマホ向けの表示に切り替え" }, "📱", /* @__PURE__ */ React.createElement("span", { className: "hidden sm:inline" }, " スマホ表示")), /* @__PURE__ */ React.createElement("button", { onClick: () => setIsMenuOpen(!isMenuOpen), className: "sm:hidden p-1 text-xl font-bold ml-1 leading-none" }, isMenuOpen ? "✕" : "≡")), /* @__PURE__ */ React.createElement("div", { className: `bg-white border-b shadow-sm transition-all duration-300 overflow-hidden ${isMenuOpen ? "max-h-96" : "max-h-[88px] sm:max-h-none"} shrink-0 z-20` }, /* @__PURE__ */ React.createElement("div", { className: "p-2 sm:p-3 flex flex-col gap-2 sm:gap-3" }, /* @__PURE__ */ React.createElement("div", { className: `w-full px-2 py-1.5 sm:px-3 sm:py-2 rounded-lg flex items-center gap-1 sm:gap-2 text-[10px] sm:text-sm font-medium ${message.type === "error" ? "bg-red-50 text-red-700 border border-red-200" : message.type === "success" ? "bg-green-50 text-green-700 border border-green-200" : "bg-blue-50 text-blue-700 border border-blue-200"}` }, /* @__PURE__ */ React.createElement("span", { className: "text-sm sm:text-lg shrink-0" }, "ℹ️"), /* @__PURE__ */ React.createElement("span", { className: "truncate" }, message.text)), nightViolations && nightViolations.hardFail && /* @__PURE__ */ React.createElement("div", { className: "w-full px-2 py-1.5 sm:px-3 sm:py-2 rounded-lg bg-red-50 border border-red-400 text-red-800 text-[10px] sm:text-sm" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between mb-1" }, /* @__PURE__ */ React.createElement("span", { className: "font-bold" }, "⛔ 夜勤人数を充足できません（自動配置は適用されていません）"), /* @__PURE__ */ React.createElement("button", { onClick: () => setNightViolations(null), className: "text-red-600 hover:text-red-900 font-bold px-1" }, "✕")), /* @__PURE__ */ React.createElement("div", { className: "mb-1" }, "不足合計：", /* @__PURE__ */ React.createElement("span", { className: "font-bold" }, nightViolations.unfilled), " 枠"), /* @__PURE__ */ React.createElement("div", { className: "mb-0.5 font-semibold" }, "不足している日："), /* @__PURE__ */ React.createElement("div", { className: "flex flex-wrap gap-1" }, nightViolations.shortageByDay && nightViolations.shortageByDay.map((x, i) => /* @__PURE__ */ React.createElement("span", { key: i, className: "inline-block px-1.5 py-0.5 rounded bg-red-100 border border-red-300" }, x.day, "日（不足", x.short, "名）"))), /* @__PURE__ */ React.createElement("div", { className: "mt-1.5 text-red-700" }, "※ 夜勤可能な職員数・前月夜勤・ロック枠・公休/NG等の制約を見直してください。")), nightViolations && !nightViolations.hardFail && nightViolations.qualShortDays && nightViolations.qualShortDays.length > 0 && /* @__PURE__ */ React.createElement("div", { className: "w-full px-2 py-1.5 sm:px-3 sm:py-2 rounded-lg bg-red-50 border border-red-400 text-red-800 text-[10px] sm:text-sm" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between mb-1" }, /* @__PURE__ */ React.createElement("span", { className: "font-bold" }, "⛔ ", activeNightQuals.join("・"), "のいない夜勤があります（夜勤人数は確保済み）"), /* @__PURE__ */ React.createElement("button", { onClick: () => setNightViolations(null), className: "text-red-600 hover:text-red-900 font-bold px-1" }, "✕")), /* @__PURE__ */ React.createElement("div", { className: "flex flex-wrap gap-1" }, nightViolations.qualShortDays.map((d) => /* @__PURE__ */ React.createElement("span", { key: d, className: "inline-block px-1.5 py-0.5 rounded bg-red-100 border border-red-300" }, d, "日"))), /* @__PURE__ */ React.createElement("div", { className: "mt-1.5 text-red-700" }, "※ ", activeNightQuals.join("・"), "の夜勤回数の合計が、その月の日数より少ないと起こります。夜勤可能な人数・希望休・ロックを見直してください。")), nightViolations && !nightViolations.hardFail && nightViolations.targetMismatches && nightViolations.targetMismatches.length > 0 && /* @__PURE__ */ React.createElement("div", { className: "w-full px-2 py-1.5 sm:px-3 sm:py-2 rounded-lg bg-orange-50 border border-orange-300 text-orange-800 text-[10px] sm:text-sm" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between mb-1" }, /* @__PURE__ */ React.createElement("span", { className: "font-bold" }, "⚠️ 夜勤回数の目標未達（人数・ロックは厳守済）"), /* @__PURE__ */ React.createElement("button", { onClick: () => setNightViolations(null), className: "text-orange-600 hover:text-orange-900 font-bold px-1" }, "✕")), /* @__PURE__ */ React.createElement("div", { className: "flex flex-wrap gap-1" }, nightViolations.targetMismatches.map((m, i) => /* @__PURE__ */ React.createElement("span", { key: i, className: "inline-block px-1.5 py-0.5 rounded bg-orange-100 border border-orange-300" }, m.name, "（目標", m.target, "→実績", m.actual, "）")))), nightViolations && !nightViolations.hardFail && nightViolations.items && nightViolations.items.length > 0 && /* @__PURE__ */ React.createElement("div", { className: "w-full px-2 py-1.5 sm:px-3 sm:py-2 rounded-lg bg-amber-50 border border-amber-300 text-amber-800 text-[10px] sm:text-sm" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between mb-1" }, /* @__PURE__ */ React.createElement("span", { className: "font-bold" }, "⚠️ 夜勤生成：soft条件の違反内訳（夜勤人数・ロックは厳守済）"), /* @__PURE__ */ React.createElement("button", { onClick: () => setNightViolations(null), className: "text-amber-600 hover:text-amber-900 font-bold px-1" }, "✕")), /* @__PURE__ */ React.createElement("ul", { className: "space-y-0.5" }, nightViolations.items.map((it, i) => /* @__PURE__ */ React.createElement("li", { key: i, className: "flex justify-between" }, /* @__PURE__ */ React.createElement("span", null, "・", it.label), /* @__PURE__ */ React.createElement("span", null, it.count, " 件"))))), requestReport && /* @__PURE__ */ React.createElement("div", { className: "w-full px-2 py-1.5 sm:px-3 sm:py-2 rounded-lg bg-rose-50 border border-rose-300 text-rose-900 text-[10px] sm:text-sm" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between mb-1" }, /* @__PURE__ */ React.createElement("span", { className: "font-bold" }, "🙋 希望休の取り込み結果", requestReport.ym ? `（${requestReport.ym}分）` : "", "：", requestReport.staffCount, "名 / ", requestReport.applied, "件を反映"), /* @__PURE__ */ React.createElement("button", { onClick: () => setRequestReport(null), className: "text-rose-600 hover:text-rose-900 font-bold px-1" }, "✕")), /* @__PURE__ */ React.createElement("ul", { className: "space-y-0.5" }, requestReport.unknown.length > 0 && /* @__PURE__ */ React.createElement("li", null, "❌ ", /* @__PURE__ */ React.createElement("span", { className: "font-bold" }, "職員登録がない氏名（未反映）"), "：", requestReport.unknown.join("、")), requestReport.missing.length > 0 && /* @__PURE__ */ React.createElement("li", null, "📭 ", /* @__PURE__ */ React.createElement("span", { className: "font-bold" }, "未提出"), "：", requestReport.missing.join("、")), requestReport.conflicts.length > 0 && /* @__PURE__ */ React.createElement("li", null, "⚠️ ", /* @__PURE__ */ React.createElement("span", { className: "font-bold" }, "既存のシフトを上書き"), "：", requestReport.conflicts.join("、")), requestReport.outOfRange.length > 0 && /* @__PURE__ */ React.createElement("li", null, "⚠️ ", /* @__PURE__ */ React.createElement("span", { className: "font-bold" }, "当月の範囲外（無視）"), "：", requestReport.outOfRange.join("、")), requestReport.warnings.map((w, i) => /* @__PURE__ */ React.createElement("li", { key: i }, "🔎 ", w)), requestReport.unknown.length === 0 && requestReport.missing.length === 0 && requestReport.conflicts.length === 0 && requestReport.outOfRange.length === 0 && requestReport.warnings.length === 0 && /* @__PURE__ */ React.createElement("li", null, "✅ 全職員から回答があり、問題は見つかりませんでした。"))), /* @__PURE__ */ React.createElement("div", { className: "flex w-full justify-between gap-2 overflow-x-auto sm:overflow-visible hide-scrollbar sm:flex-wrap" }, /* @__PURE__ */ React.createElement("div", { className: "flex gap-1.5 sm:gap-2 items-center flex-nowrap shrink-0 sm:flex-wrap sm:shrink sm:min-w-0" }, step === 0 && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("button", { onClick: () => prevMonthFileInputRef.current.click(), className: "flex items-center gap-1 px-2 py-1.5 sm:px-3 sm:py-2 bg-purple-50 border border-purple-200 text-purple-700 rounded hover:bg-purple-100 whitespace-nowrap text-xs sm:text-sm font-bold" }, "📁 ", /* @__PURE__ */ React.createElement("span", { className: "hidden sm:inline" }, "先月読込"), /* @__PURE__ */ React.createElement("span", { className: "sm:hidden" }, "先月")), /* @__PURE__ */ React.createElement("input", { type: "file", accept: ".csv", ref: prevMonthFileInputRef, onChange: handleImportPrevMonthCSV, style: { display: "none" } }), /* @__PURE__ */ React.createElement("button", { onClick: () => fileInputRef.current.click(), className: "flex items-center gap-1 px-2 py-1.5 sm:px-3 sm:py-2 bg-green-50 border border-green-200 text-green-700 rounded hover:bg-green-100 whitespace-nowrap text-xs sm:text-sm font-bold" }, "📁 ", /* @__PURE__ */ React.createElement("span", { className: "hidden sm:inline" }, "当月読込"), /* @__PURE__ */ React.createElement("span", { className: "sm:hidden" }, "当月")), /* @__PURE__ */ React.createElement("input", { type: "file", accept: ".csv", ref: fileInputRef, onChange: handleImportCSV, style: { display: "none" } }), /* @__PURE__ */ React.createElement("button", { onClick: () => setIsStaffModalOpen(true), className: "flex items-center gap-1 px-2 py-1.5 sm:px-3 sm:py-2 bg-gray-100 border border-gray-300 text-gray-700 rounded hover:bg-gray-200 whitespace-nowrap text-xs sm:text-sm font-bold" }, "👥 ", /* @__PURE__ */ React.createElement("span", { className: "hidden sm:inline" }, "職員設定"), /* @__PURE__ */ React.createElement("span", { className: "sm:hidden" }, "職員")), /* @__PURE__ */ React.createElement("button", { onClick: () => setIsDayTargetModalOpen(true), className: "flex items-center gap-1 px-2 py-1.5 sm:px-3 sm:py-2 bg-blue-50 border border-blue-200 text-blue-700 rounded hover:bg-blue-100 whitespace-nowrap text-xs sm:text-sm font-bold" }, "📊 ", /* @__PURE__ */ React.createElement("span", { className: "hidden sm:inline" }, "人数設定"), /* @__PURE__ */ React.createElement("span", { className: "sm:hidden" }, "人数")), /* @__PURE__ */ React.createElement("button", { onClick: () => setIsShiftTimeModalOpen(true), className: "flex items-center gap-1 px-2 py-1.5 sm:px-3 sm:py-2 bg-yellow-50 border border-yellow-200 text-yellow-700 rounded hover:bg-yellow-100 whitespace-nowrap text-xs sm:text-sm font-bold" }, "⏰ ", /* @__PURE__ */ React.createElement("span", { className: "hidden sm:inline" }, "時間設定"), /* @__PURE__ */ React.createElement("span", { className: "sm:hidden" }, "時間")), /* @__PURE__ */ React.createElement("button", { onClick: () => setIsPrevNightModalOpen(true), className: "flex items-center gap-1 px-2 py-1.5 sm:px-3 sm:py-2 bg-slate-100 border border-slate-300 text-slate-700 rounded hover:bg-slate-200 whitespace-nowrap text-xs sm:text-sm font-bold" }, "🌙 ", /* @__PURE__ */ React.createElement("span", { className: "hidden sm:inline" }, "前月夜勤"), /* @__PURE__ */ React.createElement("span", { className: "sm:hidden" }, "前月夜")), /* @__PURE__ */ React.createElement("button", { onClick: handleExportSettings, className: "flex items-center gap-1 px-2 py-1.5 sm:px-3 sm:py-2 bg-indigo-50 border border-indigo-200 text-indigo-700 rounded hover:bg-indigo-100 whitespace-nowrap text-xs sm:text-sm font-bold", title: "職員・人数・時間の設定をファイルに保存" }, "⚙️💾 ", /* @__PURE__ */ React.createElement("span", { className: "hidden sm:inline" }, "設定保存")), /* @__PURE__ */ React.createElement("button", { onClick: () => settingsFileInputRef.current.click(), className: "flex items-center gap-1 px-2 py-1.5 sm:px-3 sm:py-2 bg-indigo-50 border border-indigo-200 text-indigo-700 rounded hover:bg-indigo-100 whitespace-nowrap text-xs sm:text-sm font-bold", title: "保存した設定ファイルを読み込む" }, "⚙️📂 ", /* @__PURE__ */ React.createElement("span", { className: "hidden sm:inline" }, "設定読込")), /* @__PURE__ */ React.createElement("input", { type: "file", accept: ".json,application/json", ref: settingsFileInputRef, onChange: handleImportSettings, style: { display: "none" } }), /* @__PURE__ */ React.createElement("button", { onClick: () => requestsFileInputRef.current.click(), className: "flex items-center gap-1 px-2 py-1.5 sm:px-3 sm:py-2 bg-rose-50 border border-rose-200 text-rose-700 rounded hover:bg-rose-100 whitespace-nowrap text-xs sm:text-sm font-bold", title: "Googleフォームで集めた希望休を一括取り込み" }, "🙋📂 ", /* @__PURE__ */ React.createElement("span", { className: "hidden sm:inline" }, "希望休読込"), /* @__PURE__ */ React.createElement("span", { className: "sm:hidden" }, "希望休")), /* @__PURE__ */ React.createElement("input", { type: "file", accept: ".json,application/json", ref: requestsFileInputRef, onChange: handleImportRequests, style: { display: "none" } }), /* @__PURE__ */ React.createElement("button", { onClick: () => setIsContactOpen(true), className: "sm:hidden flex items-center gap-1 px-2 py-1.5 bg-sky-50 border border-sky-200 text-sky-800 rounded whitespace-nowrap text-xs font-bold" }, "✉️ 問い合わせ先"), /* @__PURE__ */ React.createElement("button", { onClick: handleExportStaffNames, className: "flex items-center gap-1 px-2 py-1.5 sm:px-3 sm:py-2 bg-rose-50 border border-rose-200 text-rose-700 rounded hover:bg-rose-100 whitespace-nowrap text-xs sm:text-sm font-bold", title: "職員名簿CSVを書き出す（フォームの氏名プルダウン用）" }, "🙋💾 ", /* @__PURE__ */ React.createElement("span", { className: "hidden sm:inline" }, "名簿書出")), /* @__PURE__ */ React.createElement("button", { onClick: () => {
     setStep(1);
     setMessage({ text: "Step1: 不足日を判定し、日勤を事前確保します。", type: "info" });
   }, className: "flex items-center gap-1 px-3 py-1.5 sm:px-4 sm:py-2 bg-blue-600 text-white rounded hover:bg-blue-700 shadow-sm font-bold whitespace-nowrap text-xs sm:text-sm" }, "次へ ▶")), step === 1 && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("button", { onClick: () => preFillDayShiftsForCriticalDays(false), className: "flex items-center gap-1 px-2 py-1.5 sm:px-3 sm:py-2 bg-emerald-600 text-white rounded hover:bg-emerald-700 shadow-sm font-bold whitespace-nowrap text-xs sm:text-sm" }, "🛡️ ", /* @__PURE__ */ React.createElement("span", { className: "hidden sm:inline" }, "不足日ブロック"), /* @__PURE__ */ React.createElement("span", { className: "sm:hidden" }, "ブロック")), /* @__PURE__ */ React.createElement("button", { onClick: () => preFillDayShiftsForCriticalDays(true), className: "flex items-center gap-1 px-2 py-1.5 sm:px-3 sm:py-2 bg-yellow-600 text-white rounded hover:bg-yellow-700 shadow-sm font-bold whitespace-nowrap text-xs sm:text-sm" }, "🔀 ", /* @__PURE__ */ React.createElement("span", { className: "hidden sm:inline" }, "再配置")), /* @__PURE__ */ React.createElement("button", { onClick: () => {
@@ -3815,7 +3876,17 @@ function App() {
       const sh = (_a2 = schedule[s.id]) == null ? void 0 : _a2[c.date];
       return sh === SHIFT_TYPES.NIGHT;
     }).length;
-    return /* @__PURE__ */ React.createElement("td", { key: c.date, className: `border text-center text-[10px] sm:text-xs font-bold ${cnt !== nightShiftCount ? "bg-red-200 text-red-700" : "text-blue-700"}` }, cnt);
+    const noQual = cnt > 0 && !nightHasQual(c.date, schedule);
+    return /* @__PURE__ */ React.createElement(
+      "td",
+      {
+        key: c.date,
+        className: `border text-center text-[10px] sm:text-xs font-bold ${cnt !== nightShiftCount ? "bg-red-200 text-red-700" : noQual ? "bg-orange-200 text-orange-800" : "text-blue-700"}`,
+        title: noQual ? `${activeNightQuals.join("・")}がいません` : void 0
+      },
+      cnt,
+      noQual ? "!" : ""
+    );
   })), /* @__PURE__ */ React.createElement("tr", { className: "bg-yellow-50 border-t border-slate-200" }, /* @__PURE__ */ React.createElement("td", { className: "border p-1 sm:p-2 sticky left-0 z-10 bg-yellow-50 text-right text-[10px] sm:text-xs font-bold text-yellow-700", title: "早番＋早日（どちらも7:30出勤）" }, "早番"), /* @__PURE__ */ React.createElement("td", { colSpan: 5, className: "border bg-slate-50" }), calendar.map((c) => {
     const cnt = staffData.reduce((sum, s) => {
       var _a2;
@@ -4116,7 +4187,18 @@ function App() {
       min: "1",
       max: "10"
     }
-  ), /* @__PURE__ */ React.createElement("span", { className: "text-sm text-gray-600" }, "名")), /* @__PURE__ */ React.createElement("div", { className: "text-xs text-gray-500 mb-4 bg-gray-50 p-2 rounded" }, "※日勤設定は「均し処理」の移動基準や色分けに反映されます。", /* @__PURE__ */ React.createElement("br", null), "※夜勤設定は夜勤の自動配置人数に反映されます。"), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end" }, /* @__PURE__ */ React.createElement("button", { onClick: () => setIsDayTargetModalOpen(false), className: "bg-blue-600 text-white px-4 py-2 rounded font-bold text-sm" }, "閉じる")))), isStaffModalOpen && /* @__PURE__ */ React.createElement("div", { className: "fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50", onClick: () => setIsStaffModalOpen(false) }, /* @__PURE__ */ React.createElement("div", { className: "bg-white rounded-lg p-4 w-11/12 max-w-5xl shadow-xl", onClick: (e) => e.stopPropagation() }, /* @__PURE__ */ React.createElement("h3", { className: "font-bold text-lg mb-4" }, "👥 職員設定"), /* @__PURE__ */ React.createElement("div", { className: "max-h-[50dvh] overflow-auto mb-4 border rounded" }, /* @__PURE__ */ React.createElement("table", { className: "w-full text-sm min-w-[600px]" }, /* @__PURE__ */ React.createElement("thead", { className: "bg-gray-50 sticky top-0 z-10 shadow-sm" }, /* @__PURE__ */ React.createElement("tr", null, /* @__PURE__ */ React.createElement("th", { className: "p-2 text-left min-w-[100px]" }, "名前"), /* @__PURE__ */ React.createElement("th", { className: "p-2 text-left min-w-[110px]" }, "グループ"), /* @__PURE__ */ React.createElement("th", { className: "p-2 text-left min-w-[110px]" }, "職種"), /* @__PURE__ */ React.createElement("th", { className: "p-2 text-center whitespace-nowrap min-w-[80px]" }, "夜勤回数"), /* @__PURE__ */ React.createElement("th", { className: "p-2 text-center whitespace-nowrap min-w-[70px]" }, "ペア禁止"), /* @__PURE__ */ React.createElement("th", { className: "p-2 text-center whitespace-nowrap min-w-[140px]" }, "個別時間(非常勤等)"), /* @__PURE__ */ React.createElement("th", { className: "p-2 w-10" }))), /* @__PURE__ */ React.createElement("tbody", null, staffData.map((s) => {
+  ), /* @__PURE__ */ React.createElement("span", { className: "text-sm text-gray-600" }, "名")), /* @__PURE__ */ React.createElement("h4", { className: "font-bold text-sm text-gray-700 mb-1 border-b pb-1" }, "夜勤に必ず1名含める職種"), /* @__PURE__ */ React.createElement("p", { className: "text-[11px] text-gray-500 mb-1.5" }, "チェックした職種の職員が、毎晩の夜勤に1名以上入るように自動作成します。複数選んだ場合は、いずれか1名でかまいません。何も選ばなければ制限はありません。"), /* @__PURE__ */ React.createElement("div", { className: "flex flex-wrap gap-x-3 gap-y-1 mb-1.5" }, qualificationOptions.map((q) => /* @__PURE__ */ React.createElement("label", { key: q, className: "flex items-center gap-1 text-sm cursor-pointer" }, /* @__PURE__ */ React.createElement(
+    "input",
+    {
+      type: "checkbox",
+      className: "w-4 h-4 accent-blue-600 cursor-pointer",
+      checked: nightRequiredQuals.includes(q),
+      onChange: (e) => setNightRequiredQuals((prev) => e.target.checked ? [...prev.filter((x) => x !== q), q] : prev.filter((x) => x !== q))
+    }
+  ), q))), activeNightQuals.length > 0 && (() => {
+    const qualNight = staffData.filter((st) => ["A", "D"].includes(st.group) && isNightQualStaff(st));
+    return /* @__PURE__ */ React.createElement("p", { className: `text-[11px] mb-4 p-1.5 rounded ${qualNight.length === 0 ? "bg-red-50 text-red-700" : "bg-blue-50 text-blue-800"}` }, qualNight.length === 0 ? `夜勤ができる職員（グループA・D）に${activeNightQuals.join("・")}がいません。職員設定で職種とグループを確認してください。` : `夜勤ができる${activeNightQuals.join("・")}：${qualNight.length}名（${qualNight.map((st) => st.name).join("、")}）。毎晩1名入るには、この人たちの夜勤の合計が月${daysInMonth}回以上必要です（1人あたり約${Math.ceil(daysInMonth / qualNight.length)}回）。`);
+  })(), activeNightQuals.length === 0 && /* @__PURE__ */ React.createElement("div", { className: "mb-4" }), /* @__PURE__ */ React.createElement("div", { className: "text-xs text-gray-500 mb-4 bg-gray-50 p-2 rounded" }, "※日勤設定は「均し処理」の移動基準や色分けに反映されます。", /* @__PURE__ */ React.createElement("br", null), "※夜勤設定は夜勤の自動配置人数に反映されます。"), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end" }, /* @__PURE__ */ React.createElement("button", { onClick: () => setIsDayTargetModalOpen(false), className: "bg-blue-600 text-white px-4 py-2 rounded font-bold text-sm" }, "閉じる")))), isStaffModalOpen && /* @__PURE__ */ React.createElement("div", { className: "fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50", onClick: () => setIsStaffModalOpen(false) }, /* @__PURE__ */ React.createElement("div", { className: "bg-white rounded-lg p-4 w-11/12 max-w-5xl shadow-xl", onClick: (e) => e.stopPropagation() }, /* @__PURE__ */ React.createElement("h3", { className: "font-bold text-lg mb-4" }, "👥 職員設定"), /* @__PURE__ */ React.createElement("div", { className: "max-h-[50dvh] overflow-auto mb-4 border rounded" }, /* @__PURE__ */ React.createElement("table", { className: "w-full text-sm min-w-[600px]" }, /* @__PURE__ */ React.createElement("thead", { className: "bg-gray-50 sticky top-0 z-10 shadow-sm" }, /* @__PURE__ */ React.createElement("tr", null, /* @__PURE__ */ React.createElement("th", { className: "p-2 text-left min-w-[100px]" }, "名前"), /* @__PURE__ */ React.createElement("th", { className: "p-2 text-left min-w-[110px]" }, "グループ"), /* @__PURE__ */ React.createElement("th", { className: "p-2 text-left min-w-[110px]" }, "職種"), /* @__PURE__ */ React.createElement("th", { className: "p-2 text-center whitespace-nowrap min-w-[80px]" }, "夜勤回数"), /* @__PURE__ */ React.createElement("th", { className: "p-2 text-center whitespace-nowrap min-w-[70px]" }, "ペア禁止"), /* @__PURE__ */ React.createElement("th", { className: "p-2 text-center whitespace-nowrap min-w-[140px]" }, "個別時間(非常勤等)"), /* @__PURE__ */ React.createElement("th", { className: "p-2 w-10" }))), /* @__PURE__ */ React.createElement("tbody", null, staffData.map((s) => {
     var _a2, _b;
     return /* @__PURE__ */ React.createElement("tr", { key: s.id, className: "border-t" }, /* @__PURE__ */ React.createElement("td", { className: "p-2" }, /* @__PURE__ */ React.createElement(
       "input",
