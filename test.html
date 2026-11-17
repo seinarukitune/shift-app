@@ -137,6 +137,11 @@ const DEFAULT_QUALIFICATIONS = ["介護福祉士", "実務者研修", "初任者
 const CONTACT_EMAIL = "kaigo.app.lab@gmail.com";
 const CONTACT_TYPES = ["ご質問", "不具合の報告", "ご意見・ご要望", "その他"];
 const CHANGELOG = [
+  { version: "v.22.4", date: "2026-11-17", items: [
+    "曜日固定に「残りの曜日をすべて休みにする」ボタンを追加しました。出勤の曜日を決めたあと、1回押すだけで他の曜日が休みになります。",
+    "曜日固定で全曜日を「出勤」か「休み」に決めた職員は、公休数を自動で「その月の休みの日数」にするようにしました。毎月の入力が不要になり、「休」の数字の警告も出なくなります。",
+    "曜日固定で決まったマスに「固」の印を付けるようにしました（自動作成では動きません）。"
+  ] },
   { version: "v.22.3", date: "2026-11-14", items: [
     "画面上部のバージョン表示から、この更新履歴を見られるようにしました。"
   ] },
@@ -1192,6 +1197,26 @@ function App() {
     const info = calendar[day - 1];
     if (!info) return "";
     return pat[info.day] || "";
+  };
+  const isFullyWeekdayFixed = (st) => !!(st && st.isCustomTime && st.useWeekdayPattern && Array.isArray(st.weekdayPattern) && st.weekdayPattern.length === 7 && st.weekdayPattern.every((v) => v === "work" || v === "off"));
+  const getTargetOffDays = (st, sched = schedule) => {
+    if (!st) return requiredOffDays;
+    if (isFullyWeekdayFixed(st)) {
+      let n = 0;
+      calendar.forEach((c) => {
+        var _a2, _b, _c;
+        const d = c.date;
+        const v = ((_a2 = sched == null ? void 0 : sched[st.id]) == null ? void 0 : _a2[d]) || ((_c = (_b = shiftRules[st.id]) == null ? void 0 : _b[d]) == null ? void 0 : _c.requested) || "";
+        if (v) {
+          if (v === SHIFT_TYPES.OFF) n++;
+        } else if (st.weekdayPattern[c.day] === "off") {
+          n++;
+        }
+      });
+      return n;
+    }
+    if (st.isCustomTime && st.customOffDays !== "" && st.customOffDays !== void 0) return Number(st.customOffDays);
+    return requiredOffDays;
   };
   const applyWeekdayPattern = (sched) => {
     staffData.forEach((s) => {
@@ -2472,7 +2497,7 @@ function App() {
         const s = newSchedule[staff.id][d];
         if (s === SHIFT_TYPES.OFF) currentOffs++;
       }
-      const targetOffDays = staff.isCustomTime && staff.customOffDays !== "" && staff.customOffDays !== void 0 ? Number(staff.customOffDays) : requiredOffDays;
+      const targetOffDays = getTargetOffDays(staff, newSchedule);
       neededOffs[staff.id] = Math.max(0, targetOffDays - currentOffs);
     });
     let totalNeeded = Object.values(neededOffs).reduce((a, b) => a + b, 0);
@@ -2878,7 +2903,7 @@ function App() {
       if (!(staff.isCustomTime && m >= 1 && m <= 4)) return;
       let offs = 0;
       for (let d = 1; d <= daysInMonth; d++) if (newSchedule[staff.id][d] === SHIFT_TYPES.OFF) offs++;
-      const targetOff = staff.customOffDays !== "" && staff.customOffDays !== void 0 ? Number(staff.customOffDays) : requiredOffDays;
+      const targetOff = getTargetOffDays(staff, newSchedule);
       if (offs > targetOff) runCapNotes.push(`${staff.name}(連勤上限${m}→公休${offs}日/設定${targetOff}日)`);
     });
     if (runCapNotes.length > 0) {
@@ -3594,7 +3619,7 @@ function App() {
     if (!mStaff) return /* @__PURE__ */ React.createElement("div", { className: "p-6 text-center text-gray-500" }, "職員が登録されていません。メニューの「職員設定」から追加してください。");
     const counts = calculateCounts(mStaff.id);
     const isNightGroup = ["A", "D"].includes(mStaff.group);
-    const targetOff = mStaff.isCustomTime && mStaff.customOffDays !== "" && mStaff.customOffDays !== void 0 ? Number(mStaff.customOffDays) : requiredOffDays;
+    const targetOff = getTargetOffDays(mStaff);
     const target = nightTargets[mStaff.id];
     const nightWarn = isNightGroup && (typeof target === "number" && counts.night !== target || counts.night < 5 || counts.night > 8);
     const stat = (label, value, cls, sub) => /* @__PURE__ */ React.createElement("div", { className: `flex-1 rounded-lg py-1.5 text-center ${cls}` }, /* @__PURE__ */ React.createElement("div", { className: "text-[10px] opacity-80" }, label), /* @__PURE__ */ React.createElement("div", { className: "text-lg font-bold leading-tight" }, value, sub && /* @__PURE__ */ React.createElement("span", { className: "text-[10px] font-normal opacity-70" }, sub)));
@@ -3618,7 +3643,7 @@ function App() {
       if (getConsecutiveAlert(mStaff.id, c.date)) warns.push("連勤超過");
       if (getNightDenseAlert(mStaff.id, c.date)) warns.push("夜勤過密");
       if (getNightEndDayAlert(mStaff.id, c.date)) warns.push("明け翌日の勤務");
-      return /* @__PURE__ */ React.createElement("div", { key: c.date, className: `flex items-center bg-white rounded-lg border ${warns.length ? "border-red-400 ring-1 ring-red-300" : "border-gray-200"}` }, /* @__PURE__ */ React.createElement("button", { onClick: () => setSelectingShift({ staffId: mStaff.id, day: c.date }), className: "flex-1 flex items-center gap-3 px-3 py-2 text-left active:bg-gray-50 min-w-0" }, /* @__PURE__ */ React.createElement("div", { className: `w-12 shrink-0 ${weekdayColor(c.day)}` }, /* @__PURE__ */ React.createElement("span", { className: "text-lg font-bold" }, c.date), /* @__PURE__ */ React.createElement("span", { className: "text-xs ml-0.5" }, "(", WEEKDAYS[c.day], ")")), /* @__PURE__ */ React.createElement("div", { className: `w-14 h-9 shrink-0 rounded-md border flex items-center justify-center text-sm ${getCellColor(shift, c)} ${shift === SHIFT_TYPES.NONE ? "text-gray-300" : ""}` }, shiftLabel(shift)), /* @__PURE__ */ React.createElement("div", { className: "flex flex-wrap gap-1 min-w-0" }, isReq && /* @__PURE__ */ React.createElement("span", { className: "text-[10px] bg-blue-500 text-white px-1.5 py-0.5 rounded font-bold" }, "希望"), hasNgs && /* @__PURE__ */ React.createElement("span", { className: "text-[10px] bg-red-500 text-white px-1.5 py-0.5 rounded font-bold" }, "NG:", rule.ngs.join("・")), warns.map((w) => /* @__PURE__ */ React.createElement("span", { key: w, className: "text-[10px] bg-red-50 text-red-700 border border-red-200 px-1.5 py-0.5 rounded font-bold" }, "⚠ ", w)))), /* @__PURE__ */ React.createElement("button", { onClick: () => toggleLock(mStaff.id, c.date), className: `w-11 h-11 shrink-0 flex items-center justify-center text-base ${isLocked ? "" : "opacity-25"}`, "aria-label": isLocked ? "ロックを解除" : "ロック" }, isLocked ? "🔒" : "🔓"));
+      return /* @__PURE__ */ React.createElement("div", { key: c.date, className: `flex items-center bg-white rounded-lg border ${warns.length ? "border-red-400 ring-1 ring-red-300" : "border-gray-200"}` }, /* @__PURE__ */ React.createElement("button", { onClick: () => setSelectingShift({ staffId: mStaff.id, day: c.date }), className: "flex-1 flex items-center gap-3 px-3 py-2 text-left active:bg-gray-50 min-w-0" }, /* @__PURE__ */ React.createElement("div", { className: `w-12 shrink-0 ${weekdayColor(c.day)}` }, /* @__PURE__ */ React.createElement("span", { className: "text-lg font-bold" }, c.date), /* @__PURE__ */ React.createElement("span", { className: "text-xs ml-0.5" }, "(", WEEKDAYS[c.day], ")")), /* @__PURE__ */ React.createElement("div", { className: `w-14 h-9 shrink-0 rounded-md border flex items-center justify-center text-sm ${getCellColor(shift, c)} ${shift === SHIFT_TYPES.NONE ? "text-gray-300" : ""}` }, shiftLabel(shift)), /* @__PURE__ */ React.createElement("div", { className: "flex flex-wrap gap-1 min-w-0" }, isReq && /* @__PURE__ */ React.createElement("span", { className: "text-[10px] bg-blue-500 text-white px-1.5 py-0.5 rounded font-bold" }, "希望"), !isLocked && !isReq && getWeekdayFix(mStaff.id, c.date) && shift === (getWeekdayFix(mStaff.id, c.date) === "off" ? SHIFT_TYPES.OFF : SHIFT_TYPES.DAY) && /* @__PURE__ */ React.createElement("span", { className: "text-[10px] bg-emerald-600 text-white px-1.5 py-0.5 rounded font-bold" }, "曜日固定"), hasNgs && /* @__PURE__ */ React.createElement("span", { className: "text-[10px] bg-red-500 text-white px-1.5 py-0.5 rounded font-bold" }, "NG:", rule.ngs.join("・")), warns.map((w) => /* @__PURE__ */ React.createElement("span", { key: w, className: "text-[10px] bg-red-50 text-red-700 border border-red-200 px-1.5 py-0.5 rounded font-bold" }, "⚠ ", w)))), /* @__PURE__ */ React.createElement("button", { onClick: () => toggleLock(mStaff.id, c.date), className: `w-11 h-11 shrink-0 flex items-center justify-center text-base ${isLocked ? "" : "opacity-25"}`, "aria-label": isLocked ? "ロックを解除" : "ロック" }, isLocked ? "🔒" : "🔓"));
     })));
   };
   const renderMobileDayView = () => {
@@ -3833,7 +3858,7 @@ function App() {
     const hasTarget = typeof target === "number";
     const isNightWarn = ["A", "D"].includes(staff.group) && (counts.night < 5 || counts.night > 8);
     const isTargetMismatch = hasTarget && counts.night !== target;
-    const targetOffDays = staff.isCustomTime && staff.customOffDays !== "" && staff.customOffDays !== void 0 ? Number(staff.customOffDays) : requiredOffDays;
+    const targetOffDays = getTargetOffDays(staff);
     const isOffOk = counts.off === targetOffDays;
     return /* @__PURE__ */ React.createElement(
       "tr",
@@ -3866,7 +3891,7 @@ function App() {
         "🌙先"
       ), /* @__PURE__ */ React.createElement("div", { className: "flex flex-col overflow-hidden" }, /* @__PURE__ */ React.createElement("span", { className: "text-gray-800 text-[10px] sm:text-sm truncate" }, staff.name), /* @__PURE__ */ React.createElement("span", { className: `text-[8px] sm:text-[9px] inline-block px-1 rounded w-fit ${["A", "D"].includes(staff.group) ? "bg-indigo-100 text-indigo-700" : "bg-teal-100 text-teal-700"}` }, staff.role, " ", hasTarget ? `(目標${target})` : "")))),
       /* @__PURE__ */ React.createElement("td", { className: `border text-center font-mono text-[10px] sm:text-xs ${["A", "D"].includes(staff.group) && (isNightWarn || isTargetMismatch) ? "text-red-600 font-bold bg-red-50" : "text-gray-500"}` }, ["A", "D"].includes(staff.group) ? counts.night : "-"),
-      /* @__PURE__ */ React.createElement("td", { className: `border text-center font-mono text-[10px] sm:text-xs ${!isOffOk ? "text-orange-600 font-bold bg-orange-50" : "text-green-600"}` }, /* @__PURE__ */ React.createElement("div", { className: "flex flex-col items-center justify-center" }, /* @__PURE__ */ React.createElement("span", null, counts.off), staff.isCustomTime && staff.customOffDays !== "" && staff.customOffDays !== void 0 && /* @__PURE__ */ React.createElement("span", { className: "text-[8px] text-gray-400 leading-none mt-[1px]" }, "/", staff.customOffDays))),
+      /* @__PURE__ */ React.createElement("td", { className: `border text-center font-mono text-[10px] sm:text-xs ${!isOffOk ? "text-orange-600 font-bold bg-orange-50" : "text-green-600"}` }, /* @__PURE__ */ React.createElement("div", { className: "flex flex-col items-center justify-center" }, /* @__PURE__ */ React.createElement("span", null, counts.off), (isFullyWeekdayFixed(staff) || staff.isCustomTime && staff.customOffDays !== "" && staff.customOffDays !== void 0) && /* @__PURE__ */ React.createElement("span", { className: "text-[8px] text-gray-400 leading-none mt-[1px]" }, "/", targetOffDays))),
       /* @__PURE__ */ React.createElement("td", { className: "border text-center font-mono text-[10px] sm:text-xs text-yellow-600" }, counts.early > 0 ? counts.early : "-"),
       /* @__PURE__ */ React.createElement("td", { className: "border text-center font-mono text-[10px] sm:text-xs text-blue-600" }, counts.day > 0 ? counts.day : "-"),
       /* @__PURE__ */ React.createElement("td", { className: "border text-center font-mono text-[10px] sm:text-xs text-purple-600" }, counts.late > 0 ? counts.late : "-"),
@@ -3877,6 +3902,8 @@ function App() {
         const isLocked = (_c = lockedCells[staff.id]) == null ? void 0 : _c[c.date];
         const isReq = (rule == null ? void 0 : rule.requested) && shift === rule.requested;
         const hasNgs = (rule == null ? void 0 : rule.ngs) && rule.ngs.length > 0;
+        const wdFix = getWeekdayFix(staff.id, c.date);
+        const isWeekdayFixed = !isLocked && !isReq && !!wdFix && shift === (wdFix === "off" ? SHIFT_TYPES.OFF : SHIFT_TYPES.DAY);
         const isConsecutiveWarn = getConsecutiveAlert(staff.id, c.date);
         const isNightDenseWarn = getNightDenseAlert(staff.id, c.date);
         const isNightEndDayWarn = getNightEndDayAlert(staff.id, c.date);
@@ -3902,7 +3929,14 @@ function App() {
               title: "ロックを解除"
             },
             "🔒"
-          ), !isLocked && shift && /* @__PURE__ */ React.createElement(
+          ), isWeekdayFixed && /* @__PURE__ */ React.createElement(
+            "span",
+            {
+              className: "bg-emerald-600 text-white text-[7px] sm:text-[8px] px-0.5 rounded shadow-sm font-bold leading-tight",
+              title: "曜日固定（職員設定で変更できます）。自動作成では動きません"
+            },
+            "固"
+          ), !isLocked && !isWeekdayFixed && shift && /* @__PURE__ */ React.createElement(
             "span",
             {
               className: "text-gray-500 text-[9px] sm:text-[10px] opacity-20 hover:opacity-100 cursor-pointer leading-none",
@@ -4310,7 +4344,7 @@ function App() {
       },
       /* @__PURE__ */ React.createElement("option", { value: "0.5" }, "0.5人"),
       /* @__PURE__ */ React.createElement("option", { value: "1" }, "1人")
-    )), s.isCustomTime && /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-1 text-[10px] sm:text-xs" }, /* @__PURE__ */ React.createElement("span", { className: "text-gray-500" }, "公休数:"), /* @__PURE__ */ React.createElement(
+    )), s.isCustomTime && /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-1 text-[10px] sm:text-xs" }, /* @__PURE__ */ React.createElement("span", { className: "text-gray-500" }, "公休数:"), isFullyWeekdayFixed(s) ? /* @__PURE__ */ React.createElement("span", { className: "px-1.5 py-0.5 rounded bg-emerald-50 border border-emerald-200 text-emerald-800 font-bold", title: "曜日固定で全曜日を決めているため、その月の休みの曜日の日数を自動で公休数にします" }, "自動（", getTargetOffDays(s), "日）") : /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(
       "input",
       {
         type: "number",
@@ -4319,11 +4353,11 @@ function App() {
         className: "border rounded px-1 py-0.5 w-12 text-center",
         placeholder: "全体"
       }
-    ), /* @__PURE__ */ React.createElement("span", { className: "text-gray-500" }, "日")), s.isCustomTime && (() => {
+    ), /* @__PURE__ */ React.createElement("span", { className: "text-gray-500" }, "日"))), s.isCustomTime && (() => {
       const m = parseInt(s.maxConsecutive, 10);
       const hasLimit = m >= 1 && m <= 4;
       const needOff = hasLimit ? minOffDaysForRun(m, daysInMonth) : 0;
-      const targetOff = s.customOffDays !== "" && s.customOffDays !== void 0 ? Number(s.customOffDays) : requiredOffDays;
+      const targetOff = getTargetOffDays(s);
       const tight = hasLimit && needOff > targetOff;
       return /* @__PURE__ */ React.createElement("div", { className: "flex flex-col items-center gap-0.5" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-1 text-[10px] sm:text-xs" }, /* @__PURE__ */ React.createElement("span", { className: "text-gray-500" }, "連勤上限:"), /* @__PURE__ */ React.createElement(
         "select",
@@ -4356,8 +4390,10 @@ function App() {
       });
       const mLimit = parseInt(s.maxConsecutive, 10);
       const runConflict = on && mLimit >= 1 && mLimit <= 4 && runMax > mLimit;
-      const targetOff2 = s.customOffDays !== "" && s.customOffDays !== void 0 ? Number(s.customOffDays) : requiredOffDays;
-      const offConflict = on && fixOff > targetOff2;
+      const targetOff2 = getTargetOffDays(s);
+      const offConflict = on && !isFullyWeekdayFixed(s) && fixOff > targetOff2;
+      const hasUnset = pat.some((v) => !v);
+      const fillRestOff = () => handleUpdateStaff(s.id, "weekdayPattern", pat.map((v) => v || "off"));
       const cycle = (i) => {
         const order = ["", "work", "off"];
         const next = [...pat];
@@ -4387,7 +4423,16 @@ function App() {
           /* @__PURE__ */ React.createElement("span", null, w),
           /* @__PURE__ */ React.createElement("span", { className: "text-[8px]" }, v === "work" ? "出" : v === "off" ? "休" : "−")
         );
-      })), /* @__PURE__ */ React.createElement("div", { className: "text-[9px] text-gray-500 leading-tight" }, "クリックで 指定なし→", /* @__PURE__ */ React.createElement("span", { className: "text-cyan-700 font-bold" }, "出勤"), "→", /* @__PURE__ */ React.createElement("span", { className: "text-red-700 font-bold" }, "休み"), "／当月: 出勤", fixWork, "日・休み", fixOff, "日"), runConflict && /* @__PURE__ */ React.createElement("div", { className: "text-[9px] sm:text-[10px] text-orange-700 bg-orange-50 border border-orange-200 rounded px-1 py-0.5 leading-tight max-w-[190px] text-center" }, "⚠ 固定出勤が最長", runMax, "連勤になり、連勤上限", mLimit, "と矛盾します。曜日固定が優先されます。"), offConflict && /* @__PURE__ */ React.createElement("div", { className: "text-[9px] sm:text-[10px] text-orange-700 bg-orange-50 border border-orange-200 rounded px-1 py-0.5 leading-tight max-w-[190px] text-center" }, "⚠ 固定の休みが", fixOff, "日あり、公休", targetOff2, "日を超えます。曜日固定が優先されます。")));
+      })), /* @__PURE__ */ React.createElement("div", { className: "text-[9px] text-gray-500 leading-tight" }, "クリックで 指定なし→", /* @__PURE__ */ React.createElement("span", { className: "text-cyan-700 font-bold" }, "出勤"), "→", /* @__PURE__ */ React.createElement("span", { className: "text-red-700 font-bold" }, "休み"), "／当月: 出勤", fixWork, "日・休み", fixOff, "日"), hasUnset && /* @__PURE__ */ React.createElement(
+        "button",
+        {
+          type: "button",
+          onClick: fillRestOff,
+          className: "text-[10px] sm:text-xs px-2 py-0.5 rounded border border-red-300 bg-red-50 text-red-700 font-bold hover:bg-red-100",
+          title: "「−（指定なし）」の曜日をすべて「休み」にします"
+        },
+        "残りの曜日をすべて休みにする"
+      ), runConflict && /* @__PURE__ */ React.createElement("div", { className: "text-[9px] sm:text-[10px] text-orange-700 bg-orange-50 border border-orange-200 rounded px-1 py-0.5 leading-tight max-w-[190px] text-center" }, "⚠ 固定出勤が最長", runMax, "連勤になり、連勤上限", mLimit, "と矛盾します。曜日固定が優先されます。"), offConflict && /* @__PURE__ */ React.createElement("div", { className: "text-[9px] sm:text-[10px] text-orange-700 bg-orange-50 border border-orange-200 rounded px-1 py-0.5 leading-tight max-w-[190px] text-center" }, "⚠ 固定の休みが", fixOff, "日あり、公休", targetOff2, "日を超えます。曜日固定が優先されます。")));
     })())), /* @__PURE__ */ React.createElement("td", { className: "p-2 text-center" }, /* @__PURE__ */ React.createElement("button", { onClick: () => handleRemoveStaff(s.id), className: "text-red-500 hover:text-red-700 font-bold text-lg leading-none" }, "×")));
   })))), /* @__PURE__ */ React.createElement("div", { className: "mb-4 border rounded p-3 bg-gray-50" }, /* @__PURE__ */ React.createElement("div", { className: "text-sm font-bold text-gray-700 mb-2" }, "職種の項目"), /* @__PURE__ */ React.createElement("div", { className: "flex flex-wrap gap-1.5 mb-2" }, qualificationOptions.map((q) => {
     const isBase = DEFAULT_QUALIFICATIONS.includes(q);
