@@ -137,6 +137,11 @@ const DEFAULT_QUALIFICATIONS = ["介護福祉士", "実務者研修", "初任者
 const CONTACT_EMAIL = "kaigo.app.lab@gmail.com";
 const CONTACT_TYPES = ["ご質問", "不具合の報告", "ご意見・ご要望", "その他"];
 const CHANGELOG = [
+  { version: "v.22.5", date: "2026-11-20", items: [
+    "職員数が多い施設で、日によって日勤の人数が大きくばらつく問題を直しました。必要数に対する余裕が日ごとにそろうように公休を配置します。",
+    "月初（1日・2日）や月末に公休が入らず、全員出勤になることがある問題を直しました。",
+    "自動で置く公休は、原則2連休までにしました（3連休以上は、希望休などで決まった場合や、ほかに置ける日がない場合だけです）。"
+  ] },
   { version: "v.22.4", date: "2026-11-17", items: [
     "曜日固定に「残りの曜日をすべて休みにする」ボタンを追加しました。出勤の曜日を決めたあと、1回押すだけで他の曜日が休みになります。",
     "曜日固定で全曜日を「出勤」か「休み」に決めた職員は、公休数を自動で「その月の休みの日数」にするようにしました。毎月の入力が不要になり、「休」の数字の警告も出なくなります。",
@@ -2438,6 +2443,25 @@ function App() {
       }
       return n;
     };
+    const MAX_AUTO_OFF_RUN = 2;
+    const offRunAt = (staffId, d, sched) => {
+      if (!isOffLikeShift(sched[staffId][d])) return 0;
+      let n = 1;
+      for (let k = d - 1; k >= 1 && isOffLikeShift(sched[staffId][k]); k--) n++;
+      for (let k = d + 1; k <= daysInMonth && isOffLikeShift(sched[staffId][k]); k++) n++;
+      return n;
+    };
+    const offRunOkAfter = (staffId, before, sched) => maxOffRunOf(staffId, sched) <= Math.max(MAX_AUTO_OFF_RUN, before);
+    const maxOffRunOf = (staffId, sched) => {
+      let mx = 0, run = 0;
+      for (let d = 1; d <= daysInMonth; d++) {
+        if (isOffLikeShift(sched[staffId][d])) {
+          run++;
+          if (run > mx) mx = run;
+        } else run = 0;
+      }
+      return mx;
+    };
     const isoDeltaOfMove = (staffId, sched, offDay, workDay) => {
       const before = countIsolatedOffs(staffId, sched);
       const keepOff = sched[staffId][offDay];
@@ -2530,6 +2554,12 @@ function App() {
             }
             if (isOffOrEnd(shiftM1)) score += 15e3;
             if (isOffLike(shiftP1)) score += 15e3;
+            {
+              let run = 1;
+              for (let k = d - 1; k >= 1 && isOffLike(newSchedule[staff.id][k]); k--) run++;
+              for (let k = d + 1; k <= daysInMonth && isOffLike(newSchedule[staff.id][k]); k++) run++;
+              if (run > MAX_AUTO_OFF_RUN) score -= 6e4;
+            }
             if (dayInfo.day === 0) score += 40;
             else if (dayInfo.day === 6) score += 40;
             else score += 10;
@@ -2551,6 +2581,10 @@ function App() {
             }
             if (remainAfterOff < dayFloorTarget) {
               score -= 5e4;
+            }
+            {
+              const dayGoal = Math.max(getTargetForDay(d, dayInfo.day), dayFloorTarget);
+              score += (remainAfterOff - dayGoal) * 6e3;
             }
             score += Math.random();
             if (!bestCandidate || score > bestCandidate.score) {
@@ -2616,9 +2650,11 @@ function App() {
         const d1 = dayDays[Math.floor(Math.random() * dayDays.length)];
         const d2 = offDays[Math.floor(Math.random() * offDays.length)];
         const isoBefore = countIsolatedOffs(staff.id, newSchedule);
+        const runBeforeM = maxOffRunOf(staff.id, newSchedule);
         newSchedule[staff.id][d1] = SHIFT_TYPES.OFF;
         newSchedule[staff.id][d2] = SHIFT_TYPES.DAY;
         const isoAfter = countIsolatedOffs(staff.id, newSchedule);
+        const runOkM = offRunOkAfter(staff.id, runBeforeM, newSchedule);
         const cons = calcConsecutiveDetail(staff.id, d2, newSchedule).total;
         let isNightEndDay = false;
         const shiftP1 = getShiftSafe(staff.id, d2 - 1, newSchedule);
@@ -2630,7 +2666,7 @@ function App() {
         const countD2 = getDayShiftCount(d2, newSchedule);
         const morningD1 = getMorningTargetForDay(d1, calendar[d1 - 1].day);
         const targetD2 = getTargetForDay(d2, calendar[d2 - 1].day);
-        if (cons > getMaxRun(staff) || isNightEndDay || countD1 < morningD1 - 1 || countD2 > targetD2 + 2 || isoAfter > isoBefore) {
+        if (cons > getMaxRun(staff) || isNightEndDay || countD1 < morningD1 - 1 || countD2 > targetD2 + 2 || isoAfter > isoBefore || !runOkM) {
           newSchedule[staff.id][d1] = SHIFT_TYPES.DAY;
           newSchedule[staff.id][d2] = SHIFT_TYPES.OFF;
         } else {
@@ -2656,6 +2692,7 @@ function App() {
         const d1 = candidatesD1[Math.floor(Math.random() * candidatesD1.length)];
         const d2 = candidatesD2[Math.floor(Math.random() * candidatesD2.length)];
         const isoBefP = countIsolatedOffs(s1.id, newSchedule) + countIsolatedOffs(s2.id, newSchedule);
+        const runBefS1 = maxOffRunOf(s1.id, newSchedule), runBefS2 = maxOffRunOf(s2.id, newSchedule);
         newSchedule[s1.id][d1] = SHIFT_TYPES.OFF;
         newSchedule[s2.id][d1] = SHIFT_TYPES.DAY;
         newSchedule[s1.id][d2] = SHIFT_TYPES.DAY;
@@ -2671,7 +2708,7 @@ function App() {
         const shiftP2_S2 = getShiftSafe(s2.id, d1 - 2, newSchedule);
         if (shiftP1_S2 === SHIFT_TYPES.NIGHT_END && shiftP2_S2 === SHIFT_TYPES.NIGHT) isNightEndDayS2 = true;
         const isoAftP = countIsolatedOffs(s1.id, newSchedule) + countIsolatedOffs(s2.id, newSchedule);
-        if (consS1 > getMaxRun(s1) || consS2 > getMaxRun(s2) || isNightEndDayS1 || isNightEndDayS2 || isoAftP > isoBefP) {
+        if (consS1 > getMaxRun(s1) || consS2 > getMaxRun(s2) || isNightEndDayS1 || isNightEndDayS2 || isoAftP > isoBefP || !offRunOkAfter(s1.id, runBefS1, newSchedule) || !offRunOkAfter(s2.id, runBefS2, newSchedule)) {
           newSchedule[s1.id][d1] = SHIFT_TYPES.DAY;
           newSchedule[s2.id][d1] = SHIFT_TYPES.OFF;
           newSchedule[s1.id][d2] = SHIFT_TYPES.OFF;
@@ -2711,7 +2748,7 @@ function App() {
                   const destTarget = getTargetForDay(fd, targetDayInfo.day);
                   const sourceTarget = getTargetForDay(d, sourceDayInfo.day);
                   if (dayCountTarget <= 3) continue;
-                  if (dayCountFree >= 8) continue;
+                  if (dayCountFree >= Math.max(8, destTarget + 2)) continue;
                   if (dayCountTarget <= sourceTarget) continue;
                   let score = 0;
                   if (dayCountTarget > sourceTarget) score += 50;
@@ -2724,11 +2761,22 @@ function App() {
               }
               if (candidates.length > 0) {
                 candidates.sort((a, b) => b.score - a.score);
-                const best = candidates[0];
-                newSchedule[staff.id][d] = SHIFT_TYPES.OFF;
-                newSchedule[staff.id][best.date] = SHIFT_TYPES.DAY;
-                changed = true;
-                break;
+                const runBeforeC = maxOffRunOf(staff.id, newSchedule);
+                let applied = false;
+                for (const best of candidates) {
+                  newSchedule[staff.id][d] = SHIFT_TYPES.OFF;
+                  newSchedule[staff.id][best.date] = SHIFT_TYPES.DAY;
+                  if (offRunOkAfter(staff.id, runBeforeC, newSchedule)) {
+                    applied = true;
+                    break;
+                  }
+                  newSchedule[staff.id][d] = SHIFT_TYPES.DAY;
+                  newSchedule[staff.id][best.date] = SHIFT_TYPES.OFF;
+                }
+                if (applied) {
+                  changed = true;
+                  break;
+                }
               }
             }
           }
@@ -2755,7 +2803,7 @@ function App() {
               const dayInfo = calendar[fd - 1];
               const destTarget = getTargetForDay(fd, dayInfo.day);
               let moveScore = 0;
-              moveScore += (8 - cnt) * 10;
+              moveScore += (Math.max(8, destTarget + 2) - cnt) * 10;
               if (cnt < destTarget) moveScore += 40;
               if (cnt >= destTarget + 1) moveScore = -9999;
               const isoDelta = isoDeltaOfMove(staff.id, newSchedule, targetDay, fd);
@@ -2770,6 +2818,7 @@ function App() {
             candidates.sort((a, b) => b.score - a.score);
             const dest = candidates[0];
             const isoBeforeMove = countIsolatedOffs(staff.id, newSchedule);
+            const runBeforeMove = maxOffRunOf(staff.id, newSchedule);
             newSchedule[staff.id][targetDay] = SHIFT_TYPES.OFF;
             newSchedule[staff.id][dest.date] = SHIFT_TYPES.DAY;
             const cons = calcConsecutiveDetail(staff.id, dest.date, newSchedule).total;
@@ -2780,7 +2829,7 @@ function App() {
               isNightEndDay = true;
             }
             const isoWorse = countIsolatedOffs(staff.id, newSchedule) > isoBeforeMove;
-            if (cons > getMaxRun(staff) || isNightEndDay || isoWorse) {
+            if (cons > getMaxRun(staff) || isNightEndDay || isoWorse || !offRunOkAfter(staff.id, runBeforeMove, newSchedule)) {
               newSchedule[staff.id][targetDay] = SHIFT_TYPES.DAY;
               newSchedule[staff.id][dest.date] = SHIFT_TYPES.OFF;
             } else {
@@ -2823,7 +2872,8 @@ function App() {
               newSchedule[staff.id][d] = SHIFT_TYPES.DAY;
               newSchedule[staff.id][t] = SHIFT_TYPES.OFF;
               const iso = countIsolatedOffs(staff.id, newSchedule);
-              const consOk = calcConsecutiveDetail(staff.id, d, newSchedule).total <= getMaxRun(staff);
+              const runOkT = offRunAt(staff.id, t, newSchedule) <= MAX_AUTO_OFF_RUN;
+              const consOk = runOkT && calcConsecutiveDetail(staff.id, d, newSchedule).total <= getMaxRun(staff);
               const restOkT = restOk(getShiftSafe(staff.id, t - 1, newSchedule), SHIFT_TYPES.OFF);
               newSchedule[staff.id][d] = SHIFT_TYPES.OFF;
               newSchedule[staff.id][t] = SHIFT_TYPES.DAY;
@@ -2850,6 +2900,48 @@ function App() {
       return moved;
     };
     consolidateOffs();
+    const balanceDayCounts = () => {
+      const slack = (d) => getDayShiftCount(d, newSchedule) - getTargetForDay(d, calendar[d - 1].day);
+      let moved = 0;
+      for (let iter = 0; iter < daysInMonth * 30; iter++) {
+        const order = Array.from({ length: daysInMonth }, (_, i) => i + 1).sort((a, b) => slack(b) - slack(a));
+        const rich = order.slice(0, 6), poor = order.slice(-6).reverse();
+        let done = false;
+        for (const r of rich) {
+          for (const pd of poor) {
+            if (slack(r) - slack(pd) <= 1) continue;
+            for (const st of staffData) {
+              if (newSchedule[st.id][r] !== SHIFT_TYPES.DAY || newSchedule[st.id][pd] !== SHIFT_TYPES.OFF) continue;
+              if (isCellLocked(st.id, r, newSchedule) || isCellLocked(st.id, pd, newSchedule)) continue;
+              if (isNg(st.id, r, SHIFT_TYPES.OFF) || isNg(st.id, pd, SHIFT_TYPES.DAY)) continue;
+              const p1 = getShiftSafe(st.id, pd - 1, newSchedule);
+              if (p1 === SHIFT_TYPES.NIGHT_END || p1 === SHIFT_TYPES.NIGHT) continue;
+              if (!restOk(p1, SHIFT_TYPES.DAY) || !restOk(SHIFT_TYPES.DAY, getShiftSafe(st.id, pd + 1, newSchedule))) continue;
+              const w = headWeight(st);
+              if (getMorningSupply(r, newSchedule) - w < getMorningTargetForDay(r, calendar[r - 1].day) - 1) continue;
+              if (st.group !== "C" && !keepsEarlyEveningSlots(r, newSchedule, st.id)) continue;
+              const isoBefore = countIsolatedOffs(st.id, newSchedule);
+              const runBefore = maxOffRunOf(st.id, newSchedule);
+              newSchedule[st.id][r] = SHIFT_TYPES.OFF;
+              newSchedule[st.id][pd] = SHIFT_TYPES.DAY;
+              const ok = calcConsecutiveDetail(st.id, pd, newSchedule).total <= getMaxRun(st) && countIsolatedOffs(st.id, newSchedule) <= isoBefore && maxOffRunOf(st.id, newSchedule) <= Math.max(MAX_AUTO_OFF_RUN, runBefore);
+              if (ok) {
+                moved++;
+                done = true;
+                break;
+              }
+              newSchedule[st.id][r] = SHIFT_TYPES.DAY;
+              newSchedule[st.id][pd] = SHIFT_TYPES.OFF;
+            }
+            if (done) break;
+          }
+          if (done) break;
+        }
+        if (!done) break;
+      }
+      return moved;
+    };
+    balanceDayCounts();
     const ensureEveningCapable = () => {
       let made = 0;
       for (let d = 1; d < daysInMonth; d++) {
@@ -2877,9 +2969,10 @@ function App() {
             if (p1 === SHIFT_TYPES.NIGHT_END || p1 === SHIFT_TYPES.NIGHT) continue;
             if (!restOk(p1, SHIFT_TYPES.DAY)) continue;
             if (!restOk(SHIFT_TYPES.DAY, getShiftSafe(st.id, e + 1, newSchedule))) continue;
+            const runBeforeE = maxOffRunOf(st.id, newSchedule);
             newSchedule[st.id][d + 1] = SHIFT_TYPES.OFF;
             newSchedule[st.id][e] = SHIFT_TYPES.DAY;
-            const runOk = calcConsecutiveDetail(st.id, e, newSchedule).total <= getMaxRun(st);
+            const runOk = calcConsecutiveDetail(st.id, e, newSchedule).total <= getMaxRun(st) && offRunOkAfter(st.id, runBeforeE, newSchedule);
             if (!runOk) {
               newSchedule[st.id][d + 1] = SHIFT_TYPES.DAY;
               newSchedule[st.id][e] = SHIFT_TYPES.OFF;
