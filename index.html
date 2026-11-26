@@ -1246,9 +1246,16 @@ function App() {
             maxConsecutive: s.maxConsecutive !== void 0 ? s.maxConsecutive : "",
             useWeekdayPattern: !!s.useWeekdayPattern,
             weekdayPattern: Array.isArray(s.weekdayPattern) && s.weekdayPattern.length === 7 ? s.weekdayPattern : ["", "", "", "", "", "", ""],
-            unit: typeof s.unit === "string" && s.unit ? s.unit : "u1",
-            helpUnits: Array.isArray(s.helpUnits) ? s.helpUnits.filter((x) => typeof x === "string") : [],
-            hoursTarget: s.hoursTarget !== void 0 && s.hoursTarget !== null ? s.hoursTarget : ""
+            // ユニット・応援可・目標時間が無い古い設定ファイルでは、同じ氏名の職員の今の設定を引き継ぐ
+            ...(() => {
+              var _a2;
+              const ex = allStaffData.find((x) => x.name === s.name);
+              return {
+                unit: typeof s.unit === "string" && s.unit ? s.unit : ex ? unitOfStaff(ex) : unitIds[0],
+                helpUnits: Array.isArray(s.helpUnits) ? s.helpUnits.filter((x) => typeof x === "string") : ex ? ex.helpUnits || [] : [],
+                hoursTarget: s.hoursTarget !== void 0 && s.hoursTarget !== null ? s.hoursTarget : ex ? (_a2 = ex.hoursTarget) != null ? _a2 : "" : ""
+              };
+            })()
           }));
           setAllStaffData(newStaff);
           applied.push("職員設定");
