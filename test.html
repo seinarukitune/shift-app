@@ -140,7 +140,8 @@ const CHANGELOG = [
   { version: "v.23", date: "2026-11-26", items: [
     "ユニット（最大3つ）ごとにシフトを作れるようにしました。職員設定で「+ ユニットを追加」を押し、職員ごとに所属ユニットを選びます。画面上部のタブでユニットを切り替え、そのユニットの職員だけで自動作成します。",
     "人数設定（日勤・朝ピーク・早番・夕方・夜勤人数など）は、ユニットごとに分かれています。",
-    "職員設定で「〇〇へ応援可」にした職員は、「🤝 応援」で、他のユニットの人が足りない日に入ります（夜勤・日勤・早番・遅番のすべて）。マスを押して、その日に働くユニットを手で選ぶこともできます。",
+    "職員設定で「〇〇へ応援可」にした職員は、「🤝 応援」で、他のユニットの人が足りない日に入ります（夜勤・日勤・早番・遅番のすべて）。人手不足で連勤が長くなった人や公休が足りない人の休みも、応援を入れて作ります。マスを押して、その日に働くユニットを手で選ぶこともできます。",
+    "応援で来た日はオレンジの枠と「応」の印、応援に出る日は点線の枠と行き先（例：→2）で表示します。表の下の「応援」の行に、来た人数（＋）と出た人数（−）を出します。",
     "CSVの書き出しは、全ユニットの職員を1つのファイルに出します（「ユニット」列あり。応援の日は「日(ユニット2)」のように書きます）。"
   ] },
   { version: "v.22.5", date: "2026-11-20", items: [
@@ -258,7 +259,7 @@ function App() {
   const unitShort = (id) => {
     const nm = unitName(id);
     const m = nm.match(/(\d+)$/);
-    return m ? m[1] : nm.slice(0, 1);
+    return m ? m[1] : nm.slice(0, 2);
   };
   const unitOfStaff = (st) => st && unitIds.includes(st.unit) ? st.unit : unitIds[0];
   const [helpAssign, setHelpAssign] = useState({});
@@ -3991,6 +3992,195 @@ function App() {
         }
       }
     });
+    const fixedOwn = (id, d) => {
+      var _a2, _b, _c;
+      return !!((_a2 = lockedCells[id]) == null ? void 0 : _a2[d]) || !!((_c = (_b = shiftRules[id]) == null ? void 0 : _b[d]) == null ? void 0 : _c.requested) || !!getWeekdayFix(id, d);
+    };
+    const coverFor = (X, k, v, w, exceptId) => {
+      const dow = calendar[k - 1].day, cx = cfg[X];
+      const mNow = morningOf(X, k), eNow = earlyOf(X, k), vNow = eveningOf(X, k);
+      const isM = MORNING_PRESENT_SHIFTS.includes(v), isE = v === N.EARLY || v === N.EARLY_DAY, isV = EVENING_PRESENT_SHIFTS.includes(v);
+      const okM = (add) => !isM || mNow - w + add >= Math.min(cx.morning(k, dow), mNow);
+      const okE = (add) => !isE || eNow - w + add >= Math.min(cx.early(dow), eNow);
+      const okV = (add) => !isV || vNow - w + add >= Math.min(cx.evening, vNow);
+      if (okM(0) && okE(0) && okV(0)) return { helper: null };
+      let best = null;
+      allStaffData.forEach((h) => {
+        var _a2, _b;
+        const Y = unitOfStaff(h);
+        if (Y === X || !ready[Y] || !(h.helpUnits || []).includes(X) || ((_a2 = H[h.id]) == null ? void 0 : _a2[k])) return;
+        const hv = (_b = S[h.id]) == null ? void 0 : _b[k], hw = headWeight(h), cy = cfg[Y];
+        const hM = MORNING_PRESENT_SHIFTS.includes(hv), hE = hv === N.EARLY || hv === N.EARLY_DAY, hV = EVENING_PRESENT_SHIFTS.includes(hv);
+        if (!okM(hM ? hw : 0) || !okE(hE ? hw : 0) || !okV(hV ? hw : 0)) return;
+        if (hM && morningOf(Y, k) - hw < cy.morning(k, dow)) return;
+        if (hE && earlyOf(Y, k) - hw < cy.early(dow)) return;
+        if (hV && eveningOf(Y, k) - hw < cy.evening) return;
+        const sc = morningOf(Y, k) - cy.morning(k, dow);
+        if (!best || sc > best.sc) best = { helper: h, sc };
+      });
+      if (best || !okM(0) || !okE(0) && !okV(0)) return best;
+      const nv = !okV(0) ? N.DAY_LATE : N.EARLY_DAY;
+      let conv = null;
+      allStaffData.forEach((o) => {
+        var _a2;
+        if (o.id === exceptId || unitAt(o, k) !== X || o.group === "C" || ((_a2 = S[o.id]) == null ? void 0 : _a2[k]) !== N.DAY || fixedOwn(o.id, k) || isNg(o.id, k, nv)) return;
+        const pv = getAt(o.id, S[o.id], k - 1), nx = k + 1 <= daysInMonth ? S[o.id][k + 1] : N.NONE;
+        if (!restOk(pv, nv) || !restOk(nv, nx)) return;
+        const used = calendar.reduce((a, c) => a + (S[o.id][c.date] === nv ? 1 : 0), 0);
+        if (!conv || used < conv.used) conv = { id: o.id, nv, used };
+      });
+      return conv ? { helper: null, convert: conv } : null;
+    };
+    const countOffOf = (row) => calendar.reduce((a, c) => a + (row[c.date] === N.OFF ? 1 : 0), 0);
+    const tailWork = (id) => {
+      let n = 0;
+      for (let k = 0; k > -10; k--) {
+        const v = getShiftSafe(id, k, S);
+        if (v && isWorkDay(v)) n++;
+        else break;
+      }
+      return n;
+    };
+    const longRuns = (id, row, lim) => {
+      const out = [];
+      let start = 0;
+      for (let k = 1; k <= daysInMonth + 1; k++) {
+        const work = k <= daysInMonth && !!row[k] && isWorkDay(row[k]);
+        if (work) {
+          if (!start) start = k;
+        } else if (start) {
+          const pre = start === 1 ? tailWork(id) : 0;
+          if (k - start + pre > lim) out.push({ a: start, b: k - 1, pre });
+          start = 0;
+        }
+      }
+      return out;
+    };
+    const excessOf = (id, row, lim) => longRuns(id, row, lim).reduce((a, r) => a + (r.b - r.a + 1 + r.pre - lim), 0);
+    let reliefMoves = 0;
+    allStaffData.forEach((st) => {
+      const X = unitOfStaff(st);
+      if (!ready[X] || !["A", "D"].includes(st.group)) return;
+      const lim = getMaxRun(st);
+      for (let guard = 0; guard < 6; guard++) {
+        const row = S[st.id] || {};
+        const ex = excessOf(st.id, row, lim);
+        const lack = getTargetOffDays(st, S) - countOffOf(row);
+        if (lack <= 0) break;
+        let best = null;
+        for (let d = 1; d <= daysInMonth; d++) {
+          if (row[d] !== N.NIGHT || fixedAt(st.id, d)) continue;
+          if (d + 1 <= daysInMonth && (row[d + 1] !== N.NIGHT_END || fixedAt(st.id, d + 1))) continue;
+          const tmp = { ...row, [d]: N.OFF };
+          if (d + 1 <= daysInMonth) {
+            tmp[d + 1] = N.OFF;
+            if (lack < 2) {
+              const nx = d + 2 <= daysInMonth ? tmp[d + 2] : N.NONE;
+              if (!restOk(N.DAY, nx) || isNg(st.id, d + 1, N.DAY)) continue;
+              tmp[d + 1] = N.DAY;
+            }
+          }
+          if (maxOffRun(tmp) > Math.max(2, maxOffRun(row))) continue;
+          if (excessOf(st.id, tmp, lim) > ex) continue;
+          const saved = S[st.id];
+          S[st.id] = tmp;
+          let hBest = null;
+          allStaffData.forEach((h) => {
+            const Y = unitOfStaff(h);
+            if (Y === X || !ready[Y] || !["A", "D"].includes(h.group) || !(h.helpUnits || []).includes(X)) return;
+            const plan = planNightHelp(h, X, d);
+            if (plan && (!hBest || plan.score > hBest.plan.score)) hBest = { h, plan };
+          });
+          S[st.id] = saved;
+          if (!hBest) continue;
+          const sc = (ex - excessOf(st.id, tmp, lim)) * 10 + hBest.plan.score;
+          if (!best || sc > best.sc) best = { d, tmp, hBest, sc };
+        }
+        if (!best) break;
+        S[best.hBest.h.id] = { ...S[best.hBest.h.id] || {} };
+        best.hBest.plan.changes.forEach(([k, v]) => {
+          S[best.hBest.h.id][k] = v;
+        });
+        H[best.hBest.h.id] = { ...H[best.hBest.h.id] || {}, [best.d]: X };
+        S[st.id] = best.tmp;
+        reliefMoves++;
+      }
+    });
+    let runMoves = 0;
+    allStaffData.forEach((st) => {
+      const X = unitOfStaff(st);
+      if (!ready[X]) return;
+      const lim = getMaxRun(st), w = headWeight(st), cx = cfg[X];
+      const target = getTargetOffDays(st, S);
+      for (let guard = 0; guard < 10; guard++) {
+        const row = S[st.id] || {};
+        const exBefore = excessOf(st.id, row, lim);
+        if (exBefore === 0) break;
+        let best = null;
+        longRuns(st.id, row, lim).forEach(({ a, b }) => {
+          for (let k = a; k <= b; k++) {
+            const v = row[k];
+            if (!DAYTYPES.includes(v) || fixedAt(st.id, k) || isNg(st.id, k, N.OFF)) continue;
+            const tmp = { ...row, [k]: N.OFF };
+            let back = 0;
+            if (countOffOf(tmp) > target) {
+              let pick = null;
+              for (let j = 1; j <= daysInMonth; j++) {
+                if (j === k || tmp[j] !== N.OFF || fixedAt(st.id, j) || isNg(st.id, j, N.DAY)) continue;
+                const pv = getAt(st.id, tmp, j - 1), nx = j + 1 <= daysInMonth ? tmp[j + 1] : N.NONE;
+                if (pv === N.NIGHT || pv === N.NIGHT_END) continue;
+                if (!restOk(pv, N.DAY) || !restOk(N.DAY, nx)) continue;
+                if (excessOf(st.id, { ...tmp, [j]: N.DAY }, lim) >= exBefore) continue;
+                const sc2 = cx.morning(j, calendar[j - 1].day) - morningOf(X, j);
+                if (!pick || sc2 > pick.sc) pick = { j, sc: sc2 };
+              }
+              if (!pick) continue;
+              back = pick.j;
+              tmp[back] = N.DAY;
+            }
+            if (excessOf(st.id, tmp, lim) >= exBefore) continue;
+            if (maxOffRun(tmp) > Math.max(2, maxOffRun(row))) continue;
+            const cov = coverFor(X, k, v, w, st.id);
+            if (!cov) continue;
+            const sc = (cov.helper || cov.convert ? 0 : 50) + (exBefore - excessOf(st.id, tmp, lim)) * 10 + (morningOf(X, k) - cx.morning(k, calendar[k - 1].day));
+            if (!best || sc > best.sc) best = { k, back, helper: cov.helper, convert: cov.convert, sc };
+          }
+        });
+        if (!best) break;
+        S[st.id] = { ...S[st.id], [best.k]: N.OFF };
+        if (best.back) S[st.id][best.back] = N.DAY;
+        if (best.helper) H[best.helper.id] = { ...H[best.helper.id] || {}, [best.k]: X };
+        if (best.convert) S[best.convert.id] = { ...S[best.convert.id], [best.k]: best.convert.nv };
+        runMoves++;
+      }
+    });
+    let offMoves = 0;
+    allStaffData.forEach((st) => {
+      const X = unitOfStaff(st);
+      if (!ready[X]) return;
+      const w = headWeight(st), cx = cfg[X], lim = getMaxRun(st);
+      let lack = getTargetOffDays(st, S) - countOffOf(S[st.id] || {});
+      for (let guard = 0; guard < 10 && lack > 0; guard++) {
+        const row = S[st.id];
+        let best = null;
+        for (let k = 1; k <= daysInMonth; k++) {
+          const v = row[k];
+          if (!DAYTYPES.includes(v) || fixedAt(st.id, k) || isNg(st.id, k, N.OFF)) continue;
+          const tmp = { ...row, [k]: N.OFF };
+          if (maxOffRun(tmp) > Math.max(2, maxOffRun(row))) continue;
+          const cov = coverFor(X, k, v, w, st.id);
+          if (!cov) continue;
+          const sc = (cov.helper || cov.convert ? 0 : 50) + (v === N.DAY ? 5 : 0) + (excessOf(st.id, row, lim) - excessOf(st.id, tmp, lim)) * 10 + (morningOf(X, k) - cx.morning(k, calendar[k - 1].day));
+          if (!best || sc > best.sc) best = { k, helper: cov.helper, convert: cov.convert, sc };
+        }
+        if (!best) break;
+        S[st.id] = { ...S[st.id], [best.k]: N.OFF };
+        if (best.helper) H[best.helper.id] = { ...H[best.helper.id] || {}, [best.k]: X };
+        if (best.convert) S[best.convert.id] = { ...S[best.convert.id], [best.k]: best.convert.nv };
+        offMoves++;
+        lack--;
+      }
+    });
     let dayMoves = 0;
     for (let pass = 0; pass < 3; pass++) {
       let changed = false;
@@ -4010,19 +4200,31 @@ function App() {
               const Y = unitOfStaff(st);
               if (Y === X || !ready[Y] || !(st.helpUnits || []).includes(X) || ((_a2 = H[st.id]) == null ? void 0 : _a2[d])) return;
               const v = (_b = S[st.id]) == null ? void 0 : _b[d];
-              const isM = MORNING_PRESENT_SHIFTS.includes(v);
-              const isE = v === N.EARLY || v === N.EARLY_DAY;
-              const isV = EVENING_PRESENT_SHIFTS.includes(v);
-              const gain = (needM && isM ? 1 : 0) + (needE && isE ? 1 : 0) + (needV && isV ? 1 : 0);
-              if (gain === 0) return;
               const w = headWeight(st), cy = cfg[Y];
-              if (isM && morningOf(Y, d) - w < cy.morning(d, dow)) return;
-              if (isE && earlyOf(Y, d) - w < cy.early(dow)) return;
-              if (isV && eveningOf(Y, d) - w < cy.evening) return;
-              const score = gain * 100 + (morningOf(Y, d) - cy.morning(d, dow));
-              if (!best || score > best.score) best = { st, score };
+              if (MORNING_PRESENT_SHIFTS.includes(v) && morningOf(Y, d) - w < cy.morning(d, dow)) return;
+              if ((v === N.EARLY || v === N.EARLY_DAY) && earlyOf(Y, d) - w < cy.early(dow)) return;
+              if (EVENING_PRESENT_SHIFTS.includes(v) && eveningOf(Y, d) - w < cy.evening) return;
+              const opts = [v];
+              if (v === N.DAY && st.group !== "C" && !fixedAt(st.id, d)) {
+                const pv = getAt(st.id, S[st.id] || {}, d - 1), nx = d + 1 <= daysInMonth ? S[st.id][d + 1] : N.NONE;
+                [[needV, N.DAY_LATE], [needE, N.EARLY_DAY]].forEach(([need, nv]) => {
+                  if (need && restOk(pv, nv) && restOk(nv, nx) && !isNg(st.id, d, nv)) opts.push(nv);
+                });
+              }
+              opts.forEach((nv) => {
+                const isM = MORNING_PRESENT_SHIFTS.includes(nv);
+                const isE = nv === N.EARLY || nv === N.EARLY_DAY;
+                const isV = EVENING_PRESENT_SHIFTS.includes(nv);
+                const gain = (needM && isM ? 1 : 0) + (needE && isE ? 1 : 0) + (needV && isV ? 1 : 0);
+                if (gain === 0) return;
+                const score = gain * 100 + (morningOf(Y, d) - cy.morning(d, dow)) - (nv !== v ? 5 : 0);
+                if (!best || score > best.score) best = { st, nv, score };
+              });
             });
             if (!best) break;
+            if (best.nv !== S[best.st.id][d]) {
+              S[best.st.id] = { ...S[best.st.id], [d]: best.nv };
+            }
             H[best.st.id] = { ...H[best.st.id] || {}, [d]: X };
             dayMoves++;
             changed = true;
@@ -4031,53 +4233,28 @@ function App() {
       });
       if (!changed) break;
     }
-    let offMoves = 0;
-    allStaffData.forEach((st) => {
-      var _a2;
-      const X = unitOfStaff(st);
+    let shiftMoves = 0;
+    unitIds.forEach((X) => {
       if (!ready[X]) return;
-      const w = headWeight(st), cx = cfg[X];
-      const countOff = () => calendar.reduce((a, c) => {
-        var _a3;
-        return a + (((_a3 = S[st.id]) == null ? void 0 : _a3[c.date]) === N.OFF ? 1 : 0);
-      }, 0);
-      let lack = getTargetOffDays(st, S) - countOff();
-      for (let guard = 0; guard < 10 && lack > 0; guard++) {
-        let best = null;
-        for (let k = 1; k <= daysInMonth; k++) {
-          if (((_a2 = S[st.id]) == null ? void 0 : _a2[k]) !== N.DAY || fixedAt(st.id, k) || isNg(st.id, k, N.OFF)) continue;
-          const dow = calendar[k - 1].day;
-          const row = { ...S[st.id] };
-          const runBefore = maxOffRun(row);
-          row[k] = N.OFF;
-          if (maxOffRun(row) > Math.max(2, runBefore)) continue;
-          const deficit = cx.morning(k, dow) - (morningOf(X, k) - w);
-          let helper = null;
-          if (deficit > 0) {
-            allStaffData.forEach((h) => {
-              var _a3, _b;
-              const Y = unitOfStaff(h);
-              if (Y === X || !ready[Y] || !(h.helpUnits || []).includes(X) || ((_a3 = H[h.id]) == null ? void 0 : _a3[k])) return;
-              const v = (_b = S[h.id]) == null ? void 0 : _b[k];
-              if (!MORNING_PRESENT_SHIFTS.includes(v)) return;
-              const hw = headWeight(h);
-              if (hw < deficit) return;
-              if (morningOf(Y, k) - hw < cfg[Y].morning(k, dow)) return;
-              if ((v === N.EARLY || v === N.EARLY_DAY) && earlyOf(Y, k) - hw < cfg[Y].early(dow)) return;
-              if (EVENING_PRESENT_SHIFTS.includes(v) && eveningOf(Y, k) - hw < cfg[Y].evening) return;
-              const sc2 = morningOf(Y, k) - cfg[Y].morning(k, dow);
-              if (!helper || sc2 > helper.sc) helper = { h, sc: sc2 };
-            });
-            if (!helper) continue;
+      const cx = cfg[X];
+      for (let d = 1; d <= daysInMonth; d++) {
+        const dow = calendar[d - 1].day;
+        [[() => eveningOf(X, d) < cx.evening, N.DAY_LATE], [() => earlyOf(X, d) < cx.early(dow), N.EARLY_DAY]].forEach(([isShort, nv]) => {
+          if (!isShort()) return;
+          let pick = null;
+          allStaffData.forEach((st) => {
+            var _a2;
+            if (unitAt(st, d) !== X || st.group === "C" || ((_a2 = S[st.id]) == null ? void 0 : _a2[d]) !== N.DAY || fixedOwn(st.id, d) || isNg(st.id, d, nv)) return;
+            const pv = getAt(st.id, S[st.id], d - 1), nx = d + 1 <= daysInMonth ? S[st.id][d + 1] : N.NONE;
+            if (!restOk(pv, nv) || !restOk(nv, nx)) return;
+            const used = calendar.reduce((a, c) => a + (S[st.id][c.date] === nv ? 1 : 0), 0);
+            if (!pick || used < pick.used) pick = { st, used };
+          });
+          if (pick) {
+            S[pick.st.id] = { ...S[pick.st.id], [d]: nv };
+            shiftMoves++;
           }
-          const sc = (deficit > 0 ? 0 : 50) + (morningOf(X, k) - cx.morning(k, dow));
-          if (!best || sc > best.sc) best = { k, helper, sc };
-        }
-        if (!best) break;
-        S[st.id] = { ...S[st.id], [best.k]: N.OFF };
-        if (best.helper) H[best.helper.h.id] = { ...H[best.helper.h.id] || {}, [best.k]: X };
-        offMoves++;
-        lack--;
+        });
       }
     });
     const remain = [];
@@ -4093,16 +4270,21 @@ function App() {
         if (eveningOf(X, d) < cx.evening) nV++;
       }
       const parts = [];
+      const mem = allStaffData.filter((st) => unitOfStaff(st) === X);
+      const overRun = mem.filter((st) => excessOf(st.id, S[st.id] || {}, getMaxRun(st)) > 0).length;
+      const lackOff = mem.filter((st) => countOffOf(S[st.id] || {}) < getTargetOffDays(st, S)).length;
       if (nN) parts.push(`夜勤${nN}日`);
       if (nM) parts.push(`朝ピーク${nM}日`);
       if (nE) parts.push(`早番${nE}日`);
       if (nV) parts.push(`夕方${nV}日`);
+      if (overRun) parts.push(`連勤超過${overRun}名`);
+      if (lackOff) parts.push(`公休不足${lackOff}名`);
       if (parts.length) remain.push(`${unitName(X)}：${parts.join("・")}`);
     });
     const skipped = notReady.length ? `（空欄が残る${notReady.map(unitName).join("・")}は対象外）` : "";
-    if (nightMoves === 0 && dayMoves === 0 && offMoves === 0) {
+    if (nightMoves === 0 && dayMoves === 0 && offMoves === 0 && runMoves === 0 && reliefMoves === 0 && shiftMoves === 0) {
       setMessage({
-        text: remain.length ? `🤝 応援できる組み合わせは見つかりませんでした。足りない日 → ${remain.join(" ／ ")}。職員設定の「応援可」と、応援を出すユニットの人数に余裕があるかを確認してください。${skipped}` : `🤝 どのユニットも不足はありません。応援は不要です。${skipped}`,
+        text: remain.length ? `🤝 応援できる組み合わせは見つかりませんでした。残っている問題 → ${remain.join(" ／ ")}。職員設定の「応援可」と、応援を出すユニットの人数に余裕があるかを確認してください。${skipped}` : `🤝 どのユニットも不足はありません。応援は不要です。${skipped}`,
         type: remain.length ? "error" : "success"
       });
       return;
@@ -4112,7 +4294,7 @@ function App() {
     setHelpAssign(H);
     setScheduleStep(step);
     setMessage({
-      text: `🤝 応援を入れました（夜勤${nightMoves}件・日中${dayMoves}件${offMoves ? `・公休の取り戻し${offMoves}件` : ""}）。応援のマスには行き先のユニットが表示されます（↩️ 戻るで取り消せます）。${remain.length ? "まだ足りない日 → " + remain.join(" ／ ") + "。" : "すべてのユニットの不足が埋まりました。"}${skipped}`,
+      text: `🤝 応援を入れました（夜勤${nightMoves + reliefMoves}件・日中${dayMoves}件${runMoves ? `・連勤の解消${runMoves}件` : ""}${offMoves ? `・公休の取り戻し${offMoves}件` : ""}${shiftMoves ? `・日遅/早日への変更${shiftMoves}件` : ""}）。応援のマスには行き先のユニットが表示されます（↩️ 戻るで取り消せます）。${remain.length ? "まだ残っている問題 → " + remain.join(" ／ ") + "。" : "すべてのユニットの不足・連勤超過・公休不足が解消しました。"}${skipped}`,
       type: remain.length ? "info" : "success"
     });
   };
@@ -4497,11 +4679,11 @@ function App() {
       u.name,
       /* @__PURE__ */ React.createElement("span", { className: "ml-1 text-[10px] font-normal opacity-70" }, cnt, "名")
     );
-  }), /* @__PURE__ */ React.createElement(
+  }), /* @__PURE__ */ React.createElement("div", { className: "ml-auto mb-1 hidden md:flex items-center gap-3 text-[10px] text-gray-600 whitespace-nowrap" }, /* @__PURE__ */ React.createElement("span", { className: "flex items-center gap-1" }, /* @__PURE__ */ React.createElement("span", { className: "inline-block w-3.5 h-3.5 bg-slate-100", style: { outline: "2px dashed #f97316", outlineOffset: "-2px" } }), "他のユニットへ応援に出る日"), /* @__PURE__ */ React.createElement("span", { className: "flex items-center gap-1" }, /* @__PURE__ */ React.createElement("span", { className: "inline-block w-3.5 h-3.5 bg-white", style: { boxShadow: "inset 0 0 0 2px #f97316" } }), "応援で来た日")), /* @__PURE__ */ React.createElement(
     "button",
     {
       onClick: runAutoHelp,
-      className: "ml-auto mb-1 px-2.5 sm:px-3 py-1 rounded bg-orange-500 text-white text-xs sm:text-sm font-bold whitespace-nowrap hover:bg-orange-600 shadow-sm",
+      className: "ml-auto md:ml-2 mb-1 px-2.5 sm:px-3 py-1 rounded bg-orange-500 text-white text-xs sm:text-sm font-bold whitespace-nowrap hover:bg-orange-600 shadow-sm",
       title: "すべてのユニットのシフトができたあとに押すと、足りない日に他のユニットの「応援可」の職員を入れます"
     },
     "🤝 応援"
@@ -4591,24 +4773,37 @@ function App() {
       if (members.length === 0) return null;
       return /* @__PURE__ */ React.createElement("div", { key: t || "none", className: "bg-white rounded-xl border p-2.5" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2 mb-1.5" }, /* @__PURE__ */ React.createElement("span", { className: `min-w-[2.5rem] px-1.5 h-7 rounded-md border flex items-center justify-center text-sm ${getCellColor(t, c)} ${t === SHIFT_TYPES.NONE ? "text-gray-400" : ""}` }, shiftLabel(t)), /* @__PURE__ */ React.createElement("span", { className: "text-xs text-gray-500" }, members.length, "名")), /* @__PURE__ */ React.createElement("div", { className: "flex flex-wrap gap-1.5" }, members.map((s) => {
         var _a2;
-        return /* @__PURE__ */ React.createElement("button", { key: s.id, onClick: () => setSelectingShift({ staffId: s.id, day: c.date }), className: "px-2.5 h-8 rounded-full bg-gray-50 border border-gray-200 text-sm active:bg-gray-200" }, s.name, ((_a2 = lockedCells[s.id]) == null ? void 0 : _a2[c.date]) ? " 🔒" : "");
+        return /* @__PURE__ */ React.createElement("button", { key: s.id, onClick: () => setSelectingShift({ staffId: s.id, day: c.date }), className: `px-2.5 h-8 rounded-full border text-sm active:bg-gray-200 ${s._guest ? "bg-orange-50 border-orange-400 text-orange-800" : "bg-gray-50 border-gray-200"}` }, s._guest ? "🤝" : "", s.name, s._guest ? `（${unitName(unitOfStaff(s))}から応援）` : "", ((_a2 = lockedCells[s.id]) == null ? void 0 : _a2[c.date]) ? " 🔒" : "");
       })));
-    }), /* @__PURE__ */ React.createElement("button", { onClick: () => setSelectedTimelineDay(c.date), className: "w-full h-11 rounded-xl bg-indigo-50 text-indigo-700 font-bold border border-indigo-200" }, "⏱ この日の時間帯グラフを見る")));
+    }), (() => {
+      const away = staffData.filter((s) => {
+        var _a2;
+        return !s._guest && ((_a2 = schedule[s.id]) == null ? void 0 : _a2[c.date]) === AWAY_SHIFT;
+      });
+      if (away.length === 0) return null;
+      return /* @__PURE__ */ React.createElement("div", { className: "bg-orange-50 rounded-xl border border-orange-200 p-2.5" }, /* @__PURE__ */ React.createElement("div", { className: "text-xs font-bold text-orange-700 mb-1.5" }, "🤝 他のユニットへ応援に出る職員（", away.length, "名）"), /* @__PURE__ */ React.createElement("div", { className: "flex flex-wrap gap-1.5" }, away.map((s) => {
+        var _a2, _b;
+        return /* @__PURE__ */ React.createElement("button", { key: s.id, onClick: () => setSelectingShift({ staffId: s.id, day: c.date }), className: "px-2.5 h-8 rounded-full bg-white border border-orange-300 text-sm" }, s.name, "：", shiftLabel(((_a2 = fullSchedule[s.id]) == null ? void 0 : _a2[c.date]) || ""), " → ", unitName((_b = helpAssign[s.id]) == null ? void 0 : _b[c.date]));
+      })));
+    })(), /* @__PURE__ */ React.createElement("button", { onClick: () => setSelectedTimelineDay(c.date), className: "w-full h-11 rounded-xl bg-indigo-50 text-indigo-700 font-bold border border-indigo-200" }, "⏱ この日の時間帯グラフを見る")));
   };
   const renderMobileGridView = () => /* @__PURE__ */ React.createElement("div", { className: "p-2" }, /* @__PURE__ */ React.createElement("div", { className: "overflow-auto bg-white rounded-lg border max-h-full" }, /* @__PURE__ */ React.createElement("table", { className: "border-collapse text-[11px]" }, /* @__PURE__ */ React.createElement("thead", { className: "sticky top-0 z-20" }, /* @__PURE__ */ React.createElement("tr", null, /* @__PURE__ */ React.createElement("th", { className: "sticky left-0 z-30 bg-slate-100 border px-1 text-left min-w-[56px]" }, "氏名"), calendar.map((c) => /* @__PURE__ */ React.createElement("th", { key: c.date, className: `border bg-slate-50 w-7 min-w-[28px] h-8 font-normal ${weekdayColor(c.day)}` }, /* @__PURE__ */ React.createElement("div", { className: "font-bold leading-none" }, c.date), /* @__PURE__ */ React.createElement("div", { className: "text-[8px] leading-none" }, WEEKDAYS[c.day]))))), /* @__PURE__ */ React.createElement("tbody", null, staffData.map((s) => /* @__PURE__ */ React.createElement("tr", { key: s.id }, /* @__PURE__ */ React.createElement("td", { className: "sticky left-0 z-10 bg-white border px-1 whitespace-nowrap max-w-[56px] overflow-hidden text-ellipsis" }, /* @__PURE__ */ React.createElement("button", { onClick: () => {
     setMStaffId(s.id);
     setMView("staff");
-  }, className: "underline decoration-dotted" }, s.name)), calendar.map((c) => {
-    var _a2;
-    const shift = ((_a2 = schedule[s.id]) == null ? void 0 : _a2[c.date]) || "";
-    const warn = getConsecutiveAlert(s.id, c.date) || getNightDenseAlert(s.id, c.date) || getNightEndDayAlert(s.id, c.date);
+  }, className: `underline decoration-dotted ${s._guest ? "text-orange-600 font-bold" : ""}` }, s._guest ? "🤝" : "", s.name)), calendar.map((c) => {
+    var _a2, _b;
+    const shift0 = ((_a2 = schedule[s.id]) == null ? void 0 : _a2[c.date]) || "";
+    const away = shift0 === AWAY_SHIFT;
+    if (away && s._guest) return /* @__PURE__ */ React.createElement("td", { key: c.date, className: "border bg-slate-100 h-8" });
+    const shift = away ? ((_b = fullSchedule[s.id]) == null ? void 0 : _b[c.date]) || "" : shift0;
+    const warn = !away && !s._guest && (getConsecutiveAlert(s.id, c.date) || getNightDenseAlert(s.id, c.date) || getNightEndDayAlert(s.id, c.date));
     return /* @__PURE__ */ React.createElement(
       "td",
       {
         key: c.date,
         onClick: () => setSelectingShift({ staffId: s.id, day: c.date }),
         className: `border text-center h-8 p-0 ${getCellColor(shift, c)}`,
-        style: warn ? { boxShadow: "inset 0 0 0 2px red" } : void 0
+        style: warn ? { boxShadow: "inset 0 0 0 2px red" } : away ? { outline: "2px dashed #f97316", outlineOffset: "-2px" } : s._guest ? { boxShadow: "inset 0 0 0 2px #f97316" } : void 0
       },
       shift === SHIFT_TYPES.OFF ? "休" : shift
     );
@@ -4775,7 +4970,7 @@ function App() {
         onDragEnd: handleDragEnd,
         onDrop: (e) => handleDrop(e, index)
       },
-      /* @__PURE__ */ React.createElement("td", { className: `border p-0 font-medium sticky left-0 z-10 shadow-sm ${dragOverIndex === index && draggedIndex !== index ? "bg-blue-50" : "bg-white"}` }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center h-full p-1 sm:p-2" }, /* @__PURE__ */ React.createElement("div", { className: "flex flex-col text-[10px] text-gray-400 mr-1 sm:hidden" }, /* @__PURE__ */ React.createElement("button", { onClick: (e) => {
+      /* @__PURE__ */ React.createElement("td", { className: `border p-0 font-medium sticky left-0 z-10 shadow-sm ${staff._guest ? "bg-orange-50" : dragOverIndex === index && draggedIndex !== index ? "bg-blue-50" : "bg-white"}` }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center h-full p-1 sm:p-2" }, /* @__PURE__ */ React.createElement("div", { className: "flex flex-col text-[10px] text-gray-400 mr-1 sm:hidden" }, /* @__PURE__ */ React.createElement("button", { onClick: (e) => {
         e.stopPropagation();
         moveStaff(index, -1);
       }, disabled: index === 0, className: "hover:text-gray-700 disabled:opacity-20 p-0.5", title: "上へ" }, "▲"), /* @__PURE__ */ React.createElement("button", { onClick: (e) => {
@@ -4792,7 +4987,7 @@ function App() {
           title: "この職員の夜勤を優先的に自動配置"
         },
         "🌙先"
-      ), /* @__PURE__ */ React.createElement("div", { className: "flex flex-col overflow-hidden" }, /* @__PURE__ */ React.createElement("span", { className: "text-gray-800 text-[10px] sm:text-sm truncate" }, staff.name), /* @__PURE__ */ React.createElement("span", { className: `text-[8px] sm:text-[9px] inline-block px-1 rounded w-fit ${staff._guest ? "bg-orange-100 text-orange-700" : ["A", "D"].includes(staff.group) ? "bg-indigo-100 text-indigo-700" : "bg-teal-100 text-teal-700"}` }, staff._guest ? `${unitName(unitOfStaff(staff))}から` : /* @__PURE__ */ React.createElement(React.Fragment, null, staff.role, " ", hasTarget ? `(目標${target})` : ""))))),
+      ), /* @__PURE__ */ React.createElement("div", { className: "flex flex-col overflow-hidden" }, /* @__PURE__ */ React.createElement("span", { className: "text-gray-800 text-[10px] sm:text-sm truncate" }, staff.name), /* @__PURE__ */ React.createElement("span", { className: `text-[8px] sm:text-[9px] inline-block px-1 rounded w-fit ${staff._guest ? "bg-orange-100 text-orange-700" : ["A", "D"].includes(staff.group) ? "bg-indigo-100 text-indigo-700" : "bg-teal-100 text-teal-700"}` }, staff._guest ? `🤝${unitName(unitOfStaff(staff))}から応援` : /* @__PURE__ */ React.createElement(React.Fragment, null, staff.role, " ", hasTarget ? `(目標${target})` : ""))))),
       staff._guest ? /* @__PURE__ */ React.createElement("td", { colSpan: 5, className: "border text-center text-[9px] sm:text-[10px] text-orange-700 bg-orange-50" }, "応援") : /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("td", { className: `border text-center font-mono text-[10px] sm:text-xs ${["A", "D"].includes(staff.group) && (isNightWarn || isTargetMismatch) ? "text-red-600 font-bold bg-red-50" : "text-gray-500"}` }, ["A", "D"].includes(staff.group) ? counts.night : "-"), /* @__PURE__ */ React.createElement("td", { className: `border text-center font-mono text-[10px] sm:text-xs ${!isOffOk ? "text-orange-600 font-bold bg-orange-50" : "text-green-600"}` }, /* @__PURE__ */ React.createElement("div", { className: "flex flex-col items-center justify-center" }, /* @__PURE__ */ React.createElement("span", null, counts.off), (isFullyWeekdayFixed(staff) || staff.isCustomTime && staff.customOffDays !== "" && staff.customOffDays !== void 0) && /* @__PURE__ */ React.createElement("span", { className: "text-[8px] text-gray-400 leading-none mt-[1px]" }, "/", targetOffDays))), /* @__PURE__ */ React.createElement("td", { className: "border text-center font-mono text-[10px] sm:text-xs text-yellow-600" }, counts.early > 0 ? counts.early : "-"), /* @__PURE__ */ React.createElement("td", { className: "border text-center font-mono text-[10px] sm:text-xs text-blue-600" }, counts.day > 0 ? counts.day : "-"), /* @__PURE__ */ React.createElement("td", { className: "border text-center font-mono text-[10px] sm:text-xs text-purple-600" }, counts.late > 0 ? counts.late : "-")),
       calendar.map((c) => {
         var _a2, _b, _c, _d, _e;
@@ -4818,13 +5013,14 @@ function App() {
           "td",
           {
             key: c.date,
-            className: `border p-0 text-center select-none transition-transform relative ${isAway ? "bg-slate-200 text-slate-700 border-slate-300 font-medium" : getCellColor(shift, c)} ${isLocked || isReq ? "" : "cursor-pointer active:scale-95"}`,
-            style: isWarn ? { boxShadow: "inset 0 0 0 3px red", zIndex: 1 } : {},
+            className: `border p-0 text-center select-none transition-transform relative ${isAway ? "bg-slate-100 text-slate-700 border-slate-300 font-medium" : getCellColor(shift, c)} ${isLocked || isReq ? "" : "cursor-pointer active:scale-95"}`,
+            style: isWarn ? { boxShadow: "inset 0 0 0 3px red", zIndex: 1 } : isAway ? { outline: "2px dashed #f97316", outlineOffset: "-3px" } : staff._guest ? { boxShadow: "inset 0 0 0 3px #f97316" } : {},
+            title: isAway ? `この日は${unitName(helpTo)}へ応援（勤務：${shownShift}）` : staff._guest ? `${unitName(unitOfStaff(staff))}から応援（このユニットで勤務）` : void 0,
             onClick: () => {
               setSelectingShift({ staffId: staff.id, day: c.date });
             }
           },
-          /* @__PURE__ */ React.createElement("div", { className: "w-full h-10 sm:h-9 flex items-center justify-center relative text-[11px] sm:text-sm" }, isAway ? shownShift : shift, /* @__PURE__ */ React.createElement("div", { className: "absolute top-0 left-0 p-0.5 z-10 pointer-events-none" }, isReq && /* @__PURE__ */ React.createElement("span", { className: "bg-blue-500 text-white text-[7px] sm:text-[8px] px-0.5 rounded shadow-sm font-bold" }, "希"), isAway && /* @__PURE__ */ React.createElement("span", { className: "bg-slate-600 text-white text-[7px] sm:text-[8px] px-0.5 rounded shadow-sm font-bold", title: `${unitName(helpTo)}へ応援` }, "→", unitShort(helpTo)), staff._guest && /* @__PURE__ */ React.createElement("span", { className: "bg-orange-500 text-white text-[7px] sm:text-[8px] px-0.5 rounded shadow-sm font-bold", title: `${unitName(unitOfStaff(staff))}から応援` }, "応")), /* @__PURE__ */ React.createElement("div", { className: "absolute top-0 right-0 p-0.5 z-10 flex flex-col items-end" }, isLocked && /* @__PURE__ */ React.createElement(
+          /* @__PURE__ */ React.createElement("div", { className: "w-full h-10 sm:h-9 flex items-center justify-center relative text-[11px] sm:text-sm" }, isAway ? /* @__PURE__ */ React.createElement("span", { className: "flex flex-col items-center leading-none" }, /* @__PURE__ */ React.createElement("span", null, shownShift), /* @__PURE__ */ React.createElement("span", { className: "text-[8px] sm:text-[9px] font-bold text-orange-600 mt-0.5 whitespace-nowrap" }, "→", unitShort(helpTo))) : shift, /* @__PURE__ */ React.createElement("div", { className: "absolute top-0 left-0 p-0.5 z-10 pointer-events-none" }, isReq && /* @__PURE__ */ React.createElement("span", { className: "bg-blue-500 text-white text-[7px] sm:text-[8px] px-0.5 rounded shadow-sm font-bold" }, "希"), staff._guest && /* @__PURE__ */ React.createElement("span", { className: "bg-orange-500 text-white text-[7px] sm:text-[8px] px-0.5 rounded shadow-sm font-bold", title: `${unitName(unitOfStaff(staff))}から応援` }, "応")), /* @__PURE__ */ React.createElement("div", { className: "absolute top-0 right-0 p-0.5 z-10 flex flex-col items-end" }, isLocked && /* @__PURE__ */ React.createElement(
             "span",
             {
               className: "text-red-600 text-[9px] sm:text-[10px] drop-shadow-md cursor-pointer leading-none",
@@ -4920,6 +5116,17 @@ function App() {
     }, 0);
     const cellClass = cnt < eveningTarget ? "bg-red-100 text-red-700 font-bold" : "text-purple-700";
     return /* @__PURE__ */ React.createElement("td", { key: c.date, className: `border text-center text-[10px] sm:text-xs ${cellClass}`, title: `必要${eveningTarget} / 在籍${cnt}` }, cnt);
+  })), multiUnit && /* @__PURE__ */ React.createElement("tr", { className: "bg-orange-50 border-t border-slate-200" }, /* @__PURE__ */ React.createElement("td", { className: "border p-1 sm:p-2 sticky left-0 z-10 bg-orange-50 text-right text-[10px] sm:text-xs font-bold text-orange-700", title: "＋は他のユニットから応援に来た人数、−はこのユニットから応援に出た人数" }, "応援"), /* @__PURE__ */ React.createElement("td", { colSpan: 5, className: "border bg-slate-50" }), calendar.map((c) => {
+    const inN = guestStaff.filter((st) => {
+      var _a2;
+      return ((_a2 = helpAssign[st.id]) == null ? void 0 : _a2[c.date]) === activeUnit;
+    }).length;
+    const outN = homeStaff.filter((st) => {
+      var _a2;
+      const h = (_a2 = helpAssign[st.id]) == null ? void 0 : _a2[c.date];
+      return h && h !== activeUnit;
+    }).length;
+    return /* @__PURE__ */ React.createElement("td", { key: c.date, className: "border text-center text-[9px] sm:text-[10px] font-bold leading-tight", title: `応援で来た人 ${inN}名 / 応援に出た人 ${outN}名` }, inN > 0 && /* @__PURE__ */ React.createElement("div", { className: "text-orange-700" }, "+", inN), outN > 0 && /* @__PURE__ */ React.createElement("div", { className: "text-slate-500" }, "−", outN));
   })), snapshotHours.map((hour) => /* @__PURE__ */ React.createElement("tr", { key: `snapshot-${hour}`, className: "bg-teal-50 border-t border-slate-200" }, /* @__PURE__ */ React.createElement("td", { className: "border p-1 sm:p-2 sticky left-0 z-10 bg-teal-50 text-right text-[10px] sm:text-xs font-bold text-teal-700" }, "在籍 ", hour, "h"), /* @__PURE__ */ React.createElement("td", { colSpan: 5, className: "border bg-slate-50" }), calendar.map((c) => {
     const count = getStaffCountAtHour(c.date, hour, schedule);
     const isWarn = count < snapshotWarningThreshold;
