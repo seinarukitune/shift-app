@@ -137,6 +137,12 @@ const DEFAULT_QUALIFICATIONS = ["介護福祉士", "実務者研修", "初任者
 const CONTACT_EMAIL = "kaigo.app.lab@gmail.com";
 const CONTACT_TYPES = ["ご質問", "不具合の報告", "ご意見・ご要望", "その他"];
 const CHANGELOG = [
+  { version: "v.23", date: "2026-11-26", items: [
+    "ユニット（最大3つ）ごとにシフトを作れるようにしました。職員設定で「+ ユニットを追加」を押し、職員ごとに所属ユニットを選びます。画面上部のタブでユニットを切り替え、そのユニットの職員だけで自動作成します。",
+    "人数設定（日勤・朝ピーク・早番・夕方・夜勤人数など）は、ユニットごとに分かれています。",
+    "職員設定で「〇〇へ応援可」にした職員は、「🤝 応援」で、他のユニットの人が足りない日に入ります（夜勤・日勤・早番・遅番のすべて）。マスを押して、その日に働くユニットを手で選ぶこともできます。",
+    "CSVの書き出しは、全ユニットの職員を1つのファイルに出します（「ユニット」列あり。応援の日は「日(ユニット2)」のように書きます）。"
+  ] },
   { version: "v.22.5", date: "2026-11-20", items: [
     "職員数が多い施設で、日によって日勤の人数が大きくばらつく問題を直しました。必要数に対する余裕が日ごとにそろうように公休を配置します。",
     "月初（1日・2日）や月末に公休が入らず、全員出勤になることがある問題を直しました。",
@@ -169,6 +175,8 @@ const CHANGELOG = [
   ] }
 ];
 const APP_VERSION = CHANGELOG[0].version;
+const MAX_UNITS = 3;
+const AWAY_SHIFT = "他";
 const headWeight = (staff) => {
   if (!staff || !staff.isCustomTime) return 1;
   return Number(staff.countWeight) === 1 ? 1 : DEFAULT_PART_TIME_WEIGHT;
@@ -202,7 +210,7 @@ function App() {
   const [step, setStep] = useState(0);
   const [scheduleStep, setScheduleStep] = useState(0);
   const [requiredOffDays, setRequiredOffDays] = useState(8);
-  const [staffData, setStaffData] = useState(() => {
+  const [allStaffData, setAllStaffData] = useState(() => {
     const saved = localStorage.getItem("staff_master_v1");
     if (saved) {
       const parsed = JSON.parse(saved);
@@ -219,11 +227,50 @@ function App() {
         useWeekdayPattern: !!s.useWeekdayPattern,
         weekdayPattern: Array.isArray(s.weekdayPattern) && s.weekdayPattern.length === 7 ? s.weekdayPattern : ["", "", "", "", "", "", ""],
         useWeekdayPattern: !!s.useWeekdayPattern,
-        weekdayPattern: Array.isArray(s.weekdayPattern) && s.weekdayPattern.length === 7 ? s.weekdayPattern : ["", "", "", "", "", "", ""]
+        weekdayPattern: Array.isArray(s.weekdayPattern) && s.weekdayPattern.length === 7 ? s.weekdayPattern : ["", "", "", "", "", "", ""],
+        unit: typeof s.unit === "string" && s.unit ? s.unit : "u1",
+        helpUnits: Array.isArray(s.helpUnits) ? s.helpUnits.filter((x) => typeof x === "string") : []
       }));
     }
     return INITIAL_STAFF_DATA;
   });
+  const [units, setUnits] = useState(() => {
+    try {
+      const u = JSON.parse(localStorage.getItem("units_v1") || "null");
+      if (Array.isArray(u) && u.length > 0) {
+        return u.filter((x) => x && x.id).slice(0, MAX_UNITS).map((x) => ({ id: String(x.id), name: String(x.name || "ユニット") }));
+      }
+    } catch (e) {
+    }
+    return [{ id: "u1", name: "ユニット1" }];
+  });
+  const [activeUnitRaw, setActiveUnit] = useState(() => {
+    try {
+      return localStorage.getItem("active_unit_v1") || "u1";
+    } catch (e) {
+      return "u1";
+    }
+  });
+  const unitIds = units.map((u) => u.id);
+  const activeUnit = unitIds.includes(activeUnitRaw) ? activeUnitRaw : unitIds[0];
+  const multiUnit = units.length > 1;
+  const unitName = (id) => (units.find((u) => u.id === id) || {}).name || "";
+  const unitShort = (id) => {
+    const nm = unitName(id);
+    const m = nm.match(/(\d+)$/);
+    return m ? m[1] : nm.slice(0, 1);
+  };
+  const unitOfStaff = (st) => st && unitIds.includes(st.unit) ? st.unit : unitIds[0];
+  const [helpAssign, setHelpAssign] = useState({});
+  const unitSettingsRef = useRef((() => {
+    try {
+      const m = JSON.parse(localStorage.getItem("unit_settings_v1") || "null");
+      return m && typeof m === "object" ? m : {};
+    } catch (e) {
+      return {};
+    }
+  })());
+  const unitMonthRef = useRef({});
   const [shiftTimes, setShiftTimes] = useState(() => {
     const saved = localStorage.getItem("shift_times_v1");
     return saved ? JSON.parse(saved) : DEFAULT_SHIFT_TIMES;
@@ -237,13 +284,13 @@ function App() {
     const saved = localStorage.getItem("snapshot_warning_threshold_v1");
     return saved ? parseInt(saved, 10) : 3;
   });
-  const [schedule, setSchedule] = useState({});
+  const [fullSchedule, setFullSchedule] = useState({});
   const [prevMonthSchedule, setPrevMonthSchedule] = useState({});
   const [lockedCells, setLockedCells] = useState({});
   const [shiftRules, setShiftRules] = useState({});
   const [history, setHistory] = useState([]);
   const [prevMonthNightStaff, setPrevMonthNightStaff] = useState([]);
-  const [nightTargets, setNightTargets] = useState({});
+  const [nightTargetsBase, setNightTargets] = useState({});
   const [specificDayTargets, setSpecificDayTargets] = useState({});
   const [dayTargets, setDayTargets] = useState(() => {
     const saved = localStorage.getItem("day_targets_v1");
@@ -370,8 +417,20 @@ function App() {
     }
   }, [year, month]);
   useEffect(() => {
-    localStorage.setItem("staff_master_v1", JSON.stringify(staffData));
-  }, [staffData]);
+    localStorage.setItem("staff_master_v1", JSON.stringify(allStaffData));
+  }, [allStaffData]);
+  useEffect(() => {
+    try {
+      localStorage.setItem("units_v1", JSON.stringify(units));
+    } catch (e) {
+    }
+  }, [units]);
+  useEffect(() => {
+    try {
+      localStorage.setItem("active_unit_v1", activeUnit);
+    } catch (e) {
+    }
+  }, [activeUnit]);
   useEffect(() => {
     localStorage.setItem("day_targets_v1", JSON.stringify(dayTargets));
   }, [dayTargets]);
@@ -390,6 +449,23 @@ function App() {
   useEffect(() => {
     localStorage.setItem("qualification_options_v1", JSON.stringify(qualificationOptions));
   }, [qualificationOptions]);
+  useEffect(() => {
+    setHelpAssign((prev) => {
+      let changed = false;
+      const out = {};
+      Object.keys(prev).forEach((id) => {
+        const st = allStaffData.find((x) => x.id === id);
+        const row = {};
+        Object.keys(prev[id] || {}).forEach((d) => {
+          const u = prev[id][d];
+          if (st && unitIds.includes(u) && u !== unitOfStaff(st)) row[d] = u;
+          else changed = true;
+        });
+        if (Object.keys(row).length > 0) out[id] = row;
+      });
+      return changed ? out : prev;
+    });
+  }, [allStaffData, units]);
   const handleAddQualification = () => {
     const name = newQualification.trim();
     if (!name) return;
@@ -402,12 +478,12 @@ function App() {
   };
   const handleRemoveQualification = (name) => {
     if (DEFAULT_QUALIFICATIONS.includes(name)) return;
-    const users = staffData.filter((st) => st.qualification === name);
+    const users = allStaffData.filter((st) => st.qualification === name);
     if (users.length > 0 && !confirm(`職種「${name}」は${users.length}名に設定されています。削除すると、その職員の職種は「未設定」になります。削除しますか？`)) return;
     setQualificationOptions(qualificationOptions.filter((q) => q !== name));
     setNightRequiredQuals((prev) => prev.filter((q) => q !== name));
     if (users.length > 0) {
-      setStaffData(staffData.map((st) => st.qualification === name ? { ...st, qualification: "" } : st));
+      setAllStaffData(allStaffData.map((st) => st.qualification === name ? { ...st, qualification: "" } : st));
     }
   };
   useEffect(() => {
@@ -419,6 +495,16 @@ function App() {
     } catch (e) {
     }
   }, [nightRequiredQuals]);
+  useEffect(() => {
+    unitSettingsRef.current = {
+      ...unitSettingsRef.current,
+      [activeUnit]: { dayTargets, morningTargets, earlyTargets, eveningTarget, eveningOverEarly, nightRequiredQuals, nightShiftCount }
+    };
+    try {
+      localStorage.setItem("unit_settings_v1", JSON.stringify(unitSettingsRef.current));
+    } catch (e) {
+    }
+  }, [activeUnit, dayTargets, morningTargets, earlyTargets, eveningTarget, eveningOverEarly, nightRequiredQuals, nightShiftCount]);
   const activeNightQuals = nightRequiredQuals.filter((q) => qualificationOptions.includes(q));
   const isNightQualStaff = (st) => !!st && activeNightQuals.includes(st.qualification);
   const nightHasQual = (day, sched) => activeNightQuals.length === 0 || staffData.some((st) => {
@@ -445,6 +531,94 @@ function App() {
   const calendar = useMemo(() => createCalendar(year, month), [year, month]);
   const daysInMonth = calendar.length;
   const totalNightSlots = daysInMonth * nightShiftCount;
+  const homeStaff = useMemo(
+    () => allStaffData.filter((st) => unitOfStaff(st) === activeUnit),
+    [allStaffData, activeUnit, units]
+  );
+  const guestStaff = useMemo(
+    () => !multiUnit ? [] : allStaffData.filter((st) => unitOfStaff(st) !== activeUnit && Object.values(helpAssign[st.id] || {}).includes(activeUnit)).map((st) => ({ ...st, _guest: true })),
+    [allStaffData, activeUnit, units, helpAssign, multiUnit]
+  );
+  const staffData = useMemo(() => guestStaff.length > 0 ? [...homeStaff, ...guestStaff] : homeStaff, [homeStaff, guestStaff]);
+  const guestIds = useMemo(() => new Set(guestStaff.map((st) => st.id)), [guestStaff]);
+  const buildUnitView = (full, help, home, guests, unitId) => {
+    if (guests.length === 0 && !home.some((st) => help[st.id])) return full;
+    const v = {};
+    home.forEach((st) => {
+      const row = full[st.id];
+      if (!row) return;
+      const h = help[st.id];
+      if (!h) {
+        v[st.id] = row;
+        return;
+      }
+      const r = { ...row };
+      Object.keys(h).forEach((d) => {
+        if (h[d] && h[d] !== unitId) r[d] = AWAY_SHIFT;
+      });
+      v[st.id] = r;
+    });
+    guests.forEach((st) => {
+      const row = full[st.id] || {};
+      const h = help[st.id] || {};
+      const r = {};
+      for (let d = 1; d <= daysInMonth; d++) r[d] = h[d] === unitId ? row[d] || SHIFT_TYPES.NONE : AWAY_SHIFT;
+      v[st.id] = r;
+    });
+    return v;
+  };
+  const schedule = useMemo(
+    () => buildUnitView(fullSchedule, helpAssign, homeStaff, guestStaff, activeUnit),
+    [fullSchedule, helpAssign, homeStaff, guestStaff, activeUnit, daysInMonth]
+  );
+  const mergeUnitView = (full, view) => {
+    const out = { ...full };
+    homeStaff.forEach((st) => {
+      const vr = view[st.id];
+      if (!vr) return;
+      const h = helpAssign[st.id];
+      if (!h) {
+        out[st.id] = vr;
+        return;
+      }
+      const r = { ...vr };
+      Object.keys(h).forEach((d) => {
+        var _a2;
+        if (h[d] && h[d] !== activeUnit) r[d] = (_a2 = (full[st.id] || {})[d]) != null ? _a2 : SHIFT_TYPES.NONE;
+      });
+      out[st.id] = r;
+    });
+    return out;
+  };
+  const setSchedule = (next) => {
+    setFullSchedule((prevFull) => {
+      const prevView = buildUnitView(prevFull, helpAssign, homeStaff, guestStaff, activeUnit);
+      const nv = typeof next === "function" ? next(prevView) : next;
+      return mergeUnitView(prevFull, nv);
+    });
+  };
+  const nightTargets = useMemo(() => {
+    if (!multiUnit || Object.keys(helpAssign).length === 0) return nightTargetsBase;
+    const nt = { ...nightTargetsBase };
+    staffData.forEach((st) => {
+      const h = helpAssign[st.id];
+      if (!h) return;
+      let lent = 0, came = 0;
+      Object.keys(h).forEach((d) => {
+        var _a2;
+        if (((_a2 = fullSchedule[st.id]) == null ? void 0 : _a2[d]) !== SHIFT_TYPES.NIGHT) return;
+        if (h[d] === activeUnit) came++;
+        else lent++;
+      });
+      if (st._guest) nt[st.id] = came;
+      else if (typeof nt[st.id] === "number" && lent > 0) nt[st.id] = Math.max(0, nt[st.id] - lent);
+    });
+    return nt;
+  }, [nightTargetsBase, helpAssign, staffData, fullSchedule, activeUnit, multiUnit]);
+  const guestNightSlots = guestStaff.reduce((a, st) => a + Object.keys(helpAssign[st.id] || {}).filter((d) => {
+    var _a2;
+    return helpAssign[st.id][d] === activeUnit && ((_a2 = fullSchedule[st.id]) == null ? void 0 : _a2[d]) === SHIFT_TYPES.NIGHT;
+  }).length, 0);
   const getShiftSafe = (staffId, day, currentSched) => {
     var _a2;
     if (day >= 1) return ((_a2 = currentSched[staffId]) == null ? void 0 : _a2[day]) || SHIFT_TYPES.NONE;
@@ -459,7 +633,8 @@ function App() {
   const saveHistory = () => {
     setHistory((prev) => {
       const newHistory = [...prev, {
-        schedule: JSON.parse(JSON.stringify(schedule)),
+        schedule: JSON.parse(JSON.stringify(fullSchedule)),
+        helpAssign: JSON.parse(JSON.stringify(helpAssign)),
         lockedCells: JSON.parse(JSON.stringify(lockedCells)),
         shiftRules: JSON.parse(JSON.stringify(shiftRules)),
         scheduleStep
@@ -471,7 +646,8 @@ function App() {
   const undo = () => {
     if (history.length === 0) return;
     const previousState = history[history.length - 1];
-    setSchedule(previousState.schedule);
+    setFullSchedule(previousState.schedule);
+    if (previousState.helpAssign) setHelpAssign(previousState.helpAssign);
     setLockedCells(previousState.lockedCells);
     if (previousState.shiftRules) setShiftRules(previousState.shiftRules);
     if (previousState.scheduleStep !== void 0) {
@@ -481,15 +657,21 @@ function App() {
     setHistory((prev) => prev.slice(0, -1));
     setMessage({ text: "直前の状態に戻しました。", type: "info" });
   };
-  const initializeSchedule = () => {
+  const initializeSchedule = (scope) => {
+    if (scope === "unit" && multiUnit) {
+      resetActiveUnit();
+      return;
+    }
     const initialSchedule = {};
-    staffData.forEach((staff) => {
+    allStaffData.forEach((staff) => {
       initialSchedule[staff.id] = {};
       calendar.forEach((day) => {
         initialSchedule[staff.id][day.date] = SHIFT_TYPES.NONE;
       });
     });
-    setSchedule(initialSchedule);
+    setFullSchedule(initialSchedule);
+    setHelpAssign({});
+    unitMonthRef.current = {};
     setPrevMonthSchedule({});
     setLockedCells({});
     setShiftRules({});
@@ -502,11 +684,135 @@ function App() {
     setHistory([]);
     setMessage({ text: "初期設定：年月を指定し、前月夜勤者などを入力してください。", type: "info" });
   };
+  const resetActiveUnit = () => {
+    const ids = new Set(homeStaff.map((st) => st.id));
+    setFullSchedule((prev) => {
+      const next = { ...prev };
+      ids.forEach((id) => {
+        next[id] = {};
+        calendar.forEach((c) => {
+          next[id][c.date] = SHIFT_TYPES.NONE;
+        });
+      });
+      return next;
+    });
+    setHelpAssign((prev) => {
+      const next = {};
+      Object.keys(prev).forEach((id) => {
+        if (ids.has(id)) return;
+        const row = {};
+        Object.keys(prev[id] || {}).forEach((d) => {
+          if (prev[id][d] !== activeUnit) row[d] = prev[id][d];
+        });
+        if (Object.keys(row).length > 0) next[id] = row;
+      });
+      return next;
+    });
+    const strip = (obj) => {
+      const n = { ...obj };
+      ids.forEach((id) => {
+        delete n[id];
+      });
+      return n;
+    };
+    setLockedCells((prev) => strip(prev));
+    setShiftRules((prev) => strip(prev));
+    setNightTargets((prev) => strip(prev));
+    setPrevMonthNightStaff((prev) => prev.filter((id) => !ids.has(id)));
+    setStep(0);
+    setScheduleStep(0);
+    setSpecificDayTargets({});
+    setSpecificMorningTargets({});
+    setNightViolations(null);
+    setHistory([]);
+    setMessage({ text: `${unitName(activeUnit)}のシフトを空にしました（他のユニットはそのままです）。`, type: "info" });
+  };
+  const loadUnitSettings = (uid) => {
+    const us = unitSettingsRef.current[uid];
+    if (!us) return;
+    if (Array.isArray(us.dayTargets) && us.dayTargets.length === 7) setDayTargets(us.dayTargets);
+    if (Array.isArray(us.morningTargets) && us.morningTargets.length === 7) setMorningTargets(us.morningTargets);
+    if (Array.isArray(us.earlyTargets) && us.earlyTargets.length === 7) setEarlyTargets(us.earlyTargets);
+    if (typeof us.eveningTarget === "number") setEveningTarget(us.eveningTarget);
+    if (typeof us.eveningOverEarly === "boolean") setEveningOverEarly(us.eveningOverEarly);
+    if (Array.isArray(us.nightRequiredQuals)) setNightRequiredQuals(us.nightRequiredQuals);
+    if (typeof us.nightShiftCount === "number") setNightShiftCount(us.nightShiftCount);
+  };
+  const loadUnitMonth = (uid) => {
+    const um = unitMonthRef.current[uid] || {};
+    setStep(um.step || 0);
+    setScheduleStep(um.scheduleStep !== void 0 ? um.scheduleStep : um.step || 0);
+    setSpecificDayTargets(um.specificDayTargets || {});
+    setSpecificMorningTargets(um.specificMorningTargets || {});
+    if (typeof um.nightShiftCount === "number") setNightShiftCount(um.nightShiftCount);
+  };
+  const switchUnit = (uid) => {
+    if (uid === activeUnit || !unitIds.includes(uid)) return;
+    loadUnitSettings(uid);
+    loadUnitMonth(uid);
+    setActiveUnit(uid);
+    setHistory([]);
+    setNightViolations(null);
+    setSelectingShift(null);
+    setSelectedTimelineDay(null);
+    setMStaffId(null);
+    nightVariantRef.current = 0;
+    nightBaselineRef.current = null;
+    setMessage({ text: `${unitName(uid)}を表示しています。自動作成はこのユニットの職員で行います。`, type: "info" });
+  };
+  const addUnit = () => {
+    if (units.length >= MAX_UNITS) return;
+    let n = 1;
+    while (unitIds.includes("u" + n)) n++;
+    const id = "u" + n;
+    unitSettingsRef.current = { ...unitSettingsRef.current, [id]: { ...unitSettingsRef.current[activeUnit] || {} } };
+    setUnits([...units, { id, name: `ユニット${n}` }]);
+    setMessage({ text: `ユニット${n}を追加しました。職員設定の「ユニット」で、職員の所属を選んでください。`, type: "success" });
+  };
+  const renameUnit = (id, name) => {
+    setUnits(units.map((u) => u.id === id ? { ...u, name: String(name).replace(/[,，\r\n()（）]/g, "").slice(0, 20) } : u));
+  };
+  const removeUnit = (id) => {
+    if (units.length <= 1) return;
+    const rest = units.filter((u) => u.id !== id);
+    const to = rest[0];
+    const members = allStaffData.filter((st) => unitOfStaff(st) === id);
+    if (!confirm(`「${unitName(id)}」を削除しますか？
+所属の職員${members.length}名は「${to.name}」の所属になります（職員とシフトは消えません）。`)) return;
+    setAllStaffData(allStaffData.map((st) => {
+      const helpUnits = (st.helpUnits || []).filter((u) => u !== id);
+      if (unitOfStaff(st) === id) return { ...st, unit: to.id, helpUnits: helpUnits.filter((u) => u !== to.id) };
+      return { ...st, helpUnits };
+    }));
+    const { [id]: _removed, ...restSettings } = unitSettingsRef.current;
+    unitSettingsRef.current = restSettings;
+    if (activeUnit === id) {
+      loadUnitSettings(to.id);
+      loadUnitMonth(to.id);
+      setActiveUnit(to.id);
+      setHistory([]);
+      setNightViolations(null);
+    }
+    setUnits(rest);
+    setMessage({ text: `ユニットを削除しました。所属していた職員は「${to.name}」の所属になりました。`, type: "info" });
+  };
+  const cleanHelpAssign = (h, ids = unitIds) => {
+    const out = {};
+    if (!h || typeof h !== "object") return out;
+    Object.keys(h).forEach((id) => {
+      const row = {};
+      Object.keys(h[id] || {}).forEach((d) => {
+        if (ids.includes(h[id][d])) row[d] = h[id][d];
+      });
+      if (Object.keys(row).length > 0) out[id] = row;
+    });
+    return out;
+  };
   useEffect(() => {
-    setSchedule((prev) => {
+    setFullSchedule((prev) => {
       const newSchedule = { ...prev };
       let changed = false;
-      staffData.forEach((staff) => {
+      allStaffData.forEach((staff) => {
         if (!newSchedule[staff.id]) {
           newSchedule[staff.id] = {};
           calendar.forEach((day) => {
@@ -517,14 +823,14 @@ function App() {
       });
       return changed ? newSchedule : prev;
     });
-  }, [staffData, calendar]);
+  }, [allStaffData, calendar]);
   useEffect(() => {
     try {
       const savedData = localStorage.getItem(`shift_data_v17_${year}_${month}`);
       if (savedData) {
         const parsed = JSON.parse(savedData);
         const loadedSchedule = parsed.schedule || {};
-        staffData.forEach((staff) => {
+        allStaffData.forEach((staff) => {
           if (!loadedSchedule[staff.id]) {
             loadedSchedule[staff.id] = {};
             calendar.forEach((day) => {
@@ -532,18 +838,29 @@ function App() {
             });
           }
         });
-        setSchedule(loadedSchedule);
+        setFullSchedule(loadedSchedule);
+        setHelpAssign(cleanHelpAssign(parsed.helpAssign));
         setPrevMonthSchedule(parsed.prevMonthSchedule || {});
         setLockedCells(parsed.lockedCells || {});
         setShiftRules(parsed.shiftRules || {});
-        setStep(parsed.step || 0);
-        setScheduleStep(parsed.scheduleStep !== void 0 ? parsed.scheduleStep : parsed.step || 0);
+        unitMonthRef.current = parsed.unitMonth && typeof parsed.unitMonth === "object" ? parsed.unitMonth : {
+          [unitIds[0]]: {
+            step: parsed.step || 0,
+            scheduleStep: parsed.scheduleStep !== void 0 ? parsed.scheduleStep : parsed.step || 0,
+            nightShiftCount: parsed.nightShiftCount,
+            specificDayTargets: parsed.specificDayTargets || {},
+            specificMorningTargets: parsed.specificMorningTargets || {}
+          }
+        };
+        const um = unitMonthRef.current[activeUnit] || {};
+        setStep(um.step || 0);
+        setScheduleStep(um.scheduleStep !== void 0 ? um.scheduleStep : um.step || 0);
         setPrevMonthNightStaff(parsed.prevMonthNightStaff || []);
         setNightTargets(parsed.nightTargets || {});
-        setSpecificDayTargets(parsed.specificDayTargets || {});
-        setSpecificMorningTargets(parsed.specificMorningTargets || {});
+        setSpecificDayTargets(um.specificDayTargets || {});
+        setSpecificMorningTargets(um.specificMorningTargets || {});
         if (parsed.requiredOffDays) setRequiredOffDays(parsed.requiredOffDays);
-        if (parsed.nightShiftCount !== void 0) setNightShiftCount(parsed.nightShiftCount);
+        if (um.nightShiftCount !== void 0) setNightShiftCount(um.nightShiftCount);
         setHistory([]);
         setMessage({ text: "保存されたデータを読み込みました。", type: "success" });
       } else {
@@ -555,11 +872,15 @@ function App() {
     }
   }, [year, month]);
   useEffect(() => {
-    if (Object.keys(schedule).length > 0) {
-      const dataToSave = { schedule, prevMonthSchedule, lockedCells, shiftRules, step, scheduleStep, prevMonthNightStaff, nightTargets, requiredOffDays, nightShiftCount, specificDayTargets, specificMorningTargets };
+    if (Object.keys(fullSchedule).length > 0) {
+      unitMonthRef.current = {
+        ...unitMonthRef.current,
+        [activeUnit]: { step, scheduleStep, nightShiftCount, specificDayTargets, specificMorningTargets }
+      };
+      const dataToSave = { schedule: fullSchedule, prevMonthSchedule, lockedCells, shiftRules, step, scheduleStep, prevMonthNightStaff, nightTargets: nightTargetsBase, requiredOffDays, nightShiftCount, specificDayTargets, specificMorningTargets, helpAssign, unitMonth: unitMonthRef.current };
       localStorage.setItem(`shift_data_v17_${year}_${month}`, JSON.stringify(dataToSave));
     }
-  }, [schedule, prevMonthSchedule, lockedCells, shiftRules, step, scheduleStep, prevMonthNightStaff, nightTargets, year, month, requiredOffDays, nightShiftCount, specificDayTargets, specificMorningTargets]);
+  }, [fullSchedule, prevMonthSchedule, lockedCells, shiftRules, step, scheduleStep, prevMonthNightStaff, nightTargetsBase, year, month, requiredOffDays, nightShiftCount, specificDayTargets, specificMorningTargets, helpAssign, activeUnit]);
   const getTargetForDay = (date, dayOfWeek) => {
     return specificDayTargets[date] !== void 0 ? specificDayTargets[date] : dayTargets[dayOfWeek];
   };
@@ -599,6 +920,20 @@ function App() {
         }
         const qualColIdx = header.findIndex((h) => h.trim() === "職種");
         const importedQuals = /* @__PURE__ */ new Set();
+        const unitColIdx = header.findIndex((h) => h.trim() === "ユニット");
+        const nextUnits = units.map((u) => ({ ...u }));
+        const unitIdByName = (nm) => {
+          const name = String(nm || "").trim();
+          if (!name) return "";
+          const hit = nextUnits.find((u) => u.name === name);
+          if (hit) return hit.id;
+          if (nextUnits.length >= MAX_UNITS) return "";
+          let n = 1;
+          while (nextUnits.some((u) => u.id === "u" + n)) n++;
+          nextUnits.push({ id: "u" + n, name: name.replace(/[,，()（）]/g, "").slice(0, 20) });
+          return "u" + n;
+        };
+        const newHelp = {};
         const newStaffData = [];
         const newSchedule = {};
         const newLockedCells = {};
@@ -609,8 +944,11 @@ function App() {
           const group = row[1] || "B";
           let role = "日勤";
           if (group === "A" || group === "D") role = "夜勤";
-          const existingStaff = staffData.find((s) => s.name === name);
+          const existingStaff = allStaffData.find((s) => s.name === name);
           const staffId = existingStaff ? existingStaff.id : `staff_${Date.now()}_${i}`;
+          const unitFromCsv = unitColIdx >= 0 ? unitIdByName(row[unitColIdx]) : "";
+          const unit = unitFromCsv || (existingStaff ? unitOfStaff(existingStaff) : activeUnit);
+          const helpUnits = existingStaff ? (existingStaff.helpUnits || []).filter((u) => u !== unit) : [];
           const forbiddenPairs = existingStaff ? existingStaff.forbiddenPairs || [] : [];
           const isCustomTime = existingStaff ? existingStaff.isCustomTime || false : false;
           const countWeight = existingStaff && Number(existingStaff.countWeight) === 1 ? 1 : 0.5;
@@ -625,12 +963,21 @@ function App() {
           const maxConsecutive = existingStaff ? existingStaff.maxConsecutive !== void 0 ? existingStaff.maxConsecutive : "" : "";
           const useWeekdayPattern = existingStaff ? !!existingStaff.useWeekdayPattern : false;
           const weekdayPattern = existingStaff && Array.isArray(existingStaff.weekdayPattern) && existingStaff.weekdayPattern.length === 7 ? existingStaff.weekdayPattern : ["", "", "", "", "", "", ""];
-          newStaffData.push({ id: staffId, name, group, role, qualification, forbiddenPairs, isCustomTime, countWeight, customStart, customEnd, customOffDays, maxConsecutive, useWeekdayPattern, weekdayPattern });
+          newStaffData.push({ id: staffId, name, group, role, qualification, forbiddenPairs, isCustomTime, countWeight, customStart, customEnd, customOffDays, maxConsecutive, useWeekdayPattern, weekdayPattern, unit, helpUnits });
           newSchedule[staffId] = {};
           newLockedCells[staffId] = {};
           for (let d = 1; d <= daysInMonth; d++) {
             const colIdx = dateIndices[d];
-            const shiftVal = colIdx !== void 0 ? (row[colIdx] || "").trim() : "";
+            let shiftVal = colIdx !== void 0 ? (row[colIdx] || "").trim() : "";
+            const hm = shiftVal.match(/^(.+?)[(（](.+)[)）]$/);
+            if (hm) {
+              shiftVal = hm[1].trim();
+              const hu = unitIdByName(hm[2]);
+              if (hu && hu !== unit) {
+                if (!newHelp[staffId]) newHelp[staffId] = {};
+                newHelp[staffId][d] = hu;
+              }
+            }
             newSchedule[staffId][d] = shiftVal;
             if (shiftVal && shiftVal !== SHIFT_TYPES.NONE) {
               newLockedCells[staffId][d] = true;
@@ -641,8 +988,10 @@ function App() {
         const missingQuals = [...importedQuals].filter((q) => !qualificationOptions.includes(q));
         if (missingQuals.length > 0) setQualificationOptions([...qualificationOptions, ...missingQuals]);
         saveHistory();
-        setStaffData(newStaffData);
-        setSchedule(newSchedule);
+        if (nextUnits.length !== units.length) setUnits(nextUnits);
+        setAllStaffData(newStaffData);
+        setFullSchedule(newSchedule);
+        setHelpAssign(newHelp);
         setLockedCells(newLockedCells);
         setScheduleStep(step);
         setMessage({ text: "CSVからデータを読み込み、入力済みの" + lockedCount + "マスに自動でロックをかけました（🔓全解除で外せます）。", type: "success" });
@@ -679,12 +1028,12 @@ function App() {
         for (let i = 1; i < lines.length; i++) {
           const row = lines[i].split(",");
           const name = row[0];
-          const existingStaff = staffData.find((s) => s.name === name);
+          const existingStaff = allStaffData.find((s) => s.name === name);
           if (existingStaff) {
             newPrevSchedule[existingStaff.id] = {};
             for (let d = 1; d <= maxDate; d++) {
               const colIdx = dateIndices[d];
-              const shiftVal = colIdx !== void 0 ? row[colIdx] || "" : "";
+              const shiftVal = colIdx !== void 0 ? (row[colIdx] || "").trim().replace(/[(（].*[)）]$/, "").trim() : "";
               newPrevSchedule[existingStaff.id][d] = shiftVal;
             }
             if (newPrevSchedule[existingStaff.id][maxDate] === SHIFT_TYPES.NIGHT) {
@@ -715,8 +1064,15 @@ function App() {
       version: SETTINGS_VERSION,
       exportedAt: (/* @__PURE__ */ new Date()).toISOString(),
       // 職員設定
-      staffData,
-      nightTargets,
+      staffData: allStaffData,
+      nightTargets: nightTargetsBase,
+      // ユニット（ユニットごとの人数設定を含む。下の人数設定は表示中のユニットの分）
+      units,
+      activeUnit,
+      unitSettings: {
+        ...unitSettingsRef.current,
+        [activeUnit]: { dayTargets, morningTargets, earlyTargets, eveningTarget, eveningOverEarly, nightRequiredQuals, nightShiftCount }
+      },
       // 人数設定
       dayTargets,
       morningTargets,
@@ -765,7 +1121,7 @@ function App() {
         if (Array.isArray(parsed.staffData)) {
           const idMap = {};
           parsed.staffData.forEach((s) => {
-            const existing = staffData.find((x) => x.name === s.name);
+            const existing = allStaffData.find((x) => x.name === s.name);
             idMap[s.id] = existing ? existing.id : s.id || "staff_" + Date.now() + "_" + Math.random().toString(36).slice(2, 7);
           });
           const newStaff = parsed.staffData.map((s) => ({
@@ -782,9 +1138,11 @@ function App() {
             customOffDays: s.customOffDays !== void 0 ? s.customOffDays : "",
             maxConsecutive: s.maxConsecutive !== void 0 ? s.maxConsecutive : "",
             useWeekdayPattern: !!s.useWeekdayPattern,
-            weekdayPattern: Array.isArray(s.weekdayPattern) && s.weekdayPattern.length === 7 ? s.weekdayPattern : ["", "", "", "", "", "", ""]
+            weekdayPattern: Array.isArray(s.weekdayPattern) && s.weekdayPattern.length === 7 ? s.weekdayPattern : ["", "", "", "", "", "", ""],
+            unit: typeof s.unit === "string" && s.unit ? s.unit : "u1",
+            helpUnits: Array.isArray(s.helpUnits) ? s.helpUnits.filter((x) => typeof x === "string") : []
           }));
-          setStaffData(newStaff);
+          setAllStaffData(newStaff);
           applied.push("職員設定");
           if (parsed.nightTargets && typeof parsed.nightTargets === "object") {
             const nt = {};
@@ -793,6 +1151,18 @@ function App() {
               if (mapped) nt[mapped] = parsed.nightTargets[k];
             });
             setNightTargets(nt);
+          }
+        }
+        if (Array.isArray(parsed.units) && parsed.units.length > 0) {
+          const nu = parsed.units.filter((x) => x && x.id).slice(0, MAX_UNITS).map((x) => ({ id: String(x.id), name: String(x.name || "ユニット") }));
+          if (nu.length > 0) {
+            unitSettingsRef.current = parsed.unitSettings && typeof parsed.unitSettings === "object" ? { ...parsed.unitSettings } : {};
+            const au = nu.some((u) => u.id === parsed.activeUnit) ? parsed.activeUnit : nu[0].id;
+            setUnits(nu);
+            setActiveUnit(au);
+            loadUnitMonth(au);
+            setHistory([]);
+            applied.push("ユニット");
           }
         }
         let countApplied = false;
@@ -889,11 +1259,11 @@ function App() {
           return;
         }
         const byName = {};
-        staffData.forEach((s) => {
+        allStaffData.forEach((s) => {
           byName[normalizeName(s.name)] = s;
         });
         const nextRules = JSON.parse(JSON.stringify(shiftRules));
-        const nextSchedule = JSON.parse(JSON.stringify(schedule));
+        const nextSchedule = JSON.parse(JSON.stringify(fullSchedule));
         const nextLocked = JSON.parse(JSON.stringify(lockedCells));
         const unknown = [];
         const conflicts = [];
@@ -943,10 +1313,10 @@ function App() {
             applied++;
           });
         });
-        const missing = staffData.filter((s) => !submitted[s.id]).map((s) => s.name);
+        const missing = allStaffData.filter((s) => !submitted[s.id]).map((s) => s.name);
         saveHistory();
         setShiftRules(nextRules);
-        setSchedule(nextSchedule);
+        setFullSchedule(nextSchedule);
         setLockedCells(nextLocked);
         setScheduleStep(step);
         setRequestReport({
@@ -973,7 +1343,7 @@ function App() {
   };
   const handleExportStaffNames = () => {
     let csv = "\uFEFF氏名,グループ,夜勤\n";
-    staffData.forEach((s) => {
+    allStaffData.forEach((s) => {
       csv += `${s.name},${s.group},${["A", "D"].includes(s.group) ? "○" : ""}
 `;
     });
@@ -990,11 +1360,11 @@ function App() {
   };
   const handleAddStaff = () => {
     const id = "staff_" + Date.now();
-    setStaffData([...staffData, { id, name: "新規職員", group: "B", role: "日勤", forbiddenPairs: [], qualification: "", isCustomTime: false, countWeight: 0.5, customStart: "09:00", customEnd: "15:00", customOffDays: "", maxConsecutive: "", useWeekdayPattern: false, weekdayPattern: ["", "", "", "", "", "", ""] }]);
+    setAllStaffData([...allStaffData, { id, unit: activeUnit, helpUnits: [], name: "新規職員", group: "B", role: "日勤", forbiddenPairs: [], qualification: "", isCustomTime: false, countWeight: 0.5, customStart: "09:00", customEnd: "15:00", customOffDays: "", maxConsecutive: "", useWeekdayPattern: false, weekdayPattern: ["", "", "", "", "", "", ""] }]);
   };
   const handleRemoveStaff = (id) => {
     if (confirm("この職員をリストから削除しますか？")) {
-      setStaffData(staffData.filter((s) => s.id !== id).map((s) => {
+      setAllStaffData(allStaffData.filter((s) => s.id !== id).map((s) => {
         var _a2;
         if ((_a2 = s.forbiddenPairs) == null ? void 0 : _a2.includes(id)) {
           return { ...s, forbiddenPairs: s.forbiddenPairs.filter((pId) => pId !== id) };
@@ -1004,9 +1374,10 @@ function App() {
     }
   };
   const handleUpdateStaff = (id, field, value) => {
-    const nextStaff = staffData.map((s) => {
+    const nextStaff = allStaffData.map((s) => {
       if (s.id === id) {
         const updates = { [field]: value };
+        if (field === "unit") updates.helpUnits = (s.helpUnits || []).filter((u) => u !== value);
         if (field === "group") {
           if (value === "A" || value === "D") updates.role = "夜勤";
           else if (value === "B") updates.role = "日勤";
@@ -1020,17 +1391,18 @@ function App() {
       }
       return s;
     });
-    setStaffData(nextStaff);
+    setAllStaffData(nextStaff);
     if (["useWeekdayPattern", "weekdayPattern", "isCustomTime"].includes(field)) {
       const target = nextStaff.find((s) => s.id === id);
       const active = target && target.isCustomTime && target.useWeekdayPattern && Array.isArray(target.weekdayPattern);
-      setSchedule((prev) => {
+      setFullSchedule((prev) => {
         const next = JSON.parse(JSON.stringify(prev));
         if (!next[id]) next[id] = {};
         calendar.forEach((c) => {
-          var _a2, _b, _c;
+          var _a2, _b, _c, _d;
           if ((_a2 = lockedCells[id]) == null ? void 0 : _a2[c.date]) return;
-          if ((_c = (_b = shiftRules[id]) == null ? void 0 : _b[c.date]) == null ? void 0 : _c.requested) return;
+          if ((_b = helpAssign[id]) == null ? void 0 : _b[c.date]) return;
+          if ((_d = (_c = shiftRules[id]) == null ? void 0 : _c[c.date]) == null ? void 0 : _d.requested) return;
           const fix = active ? target.weekdayPattern[c.day] || "" : "";
           if (fix) next[id][c.date] = fix === "off" ? SHIFT_TYPES.OFF : SHIFT_TYPES.DAY;
         });
@@ -1039,7 +1411,7 @@ function App() {
     }
   };
   const handleToggleForbiddenPair = (id1, id2) => {
-    setStaffData((prev) => prev.map((s) => {
+    setAllStaffData((prev) => prev.map((s) => {
       if (s.id === id1) {
         const pairs = s.forbiddenPairs || [];
         return { ...s, forbiddenPairs: pairs.includes(id2) ? pairs.filter((id) => id !== id2) : [...pairs, id2] };
@@ -1053,9 +1425,9 @@ function App() {
   };
   const handleShiftChange = (staffId, day, value) => {
     saveHistory();
-    setSchedule((prev) => ({
+    setFullSchedule((prev) => ({
       ...prev,
-      [staffId]: { ...prev[staffId], [day]: value }
+      [staffId]: { ...prev[staffId] || {}, [day]: value }
     }));
     setScheduleStep(step);
   };
@@ -1070,12 +1442,23 @@ function App() {
       }
     }));
     if (tempRequested) {
-      setSchedule((prev) => ({
+      setFullSchedule((prev) => ({
         ...prev,
-        [staffId]: { ...prev[staffId], [day]: tempRequested }
+        [staffId]: { ...prev[staffId] || {}, [day]: tempRequested }
       }));
     }
     setSelectingShift(null);
+  };
+  const setHelpFor = (staffId, day, unitId) => {
+    saveHistory();
+    setHelpAssign((prev) => {
+      const next = { ...prev, [staffId]: { ...prev[staffId] || {} } };
+      if (unitId) next[staffId][day] = unitId;
+      else delete next[staffId][day];
+      if (Object.keys(next[staffId]).length === 0) delete next[staffId];
+      return next;
+    });
+    setScheduleStep(step);
   };
   const toggleLock = (staffId, day) => {
     saveHistory();
@@ -1092,11 +1475,12 @@ function App() {
     setLockedCells((prev) => {
       const next = JSON.parse(JSON.stringify(prev));
       staffData.forEach((staff) => {
+        if (staff._guest) return;
         if (!next[staff.id]) next[staff.id] = {};
         calendar.forEach((c) => {
           var _a2;
           const shift = (_a2 = schedule[staff.id]) == null ? void 0 : _a2[c.date];
-          if (shift && shift !== SHIFT_TYPES.NONE) {
+          if (shift && shift !== SHIFT_TYPES.NONE && shift !== AWAY_SHIFT) {
             next[staff.id][c.date] = true;
           }
         });
@@ -1107,9 +1491,19 @@ function App() {
     setMessage({ text: "入力されているシフトをすべてロックしました。", type: "success" });
   };
   const handleUnlockAll = () => {
-    if (confirm("すべてのロックを解除しますか？")) {
+    if (confirm(multiUnit ? `${unitName(activeUnit)}のロックをすべて解除しますか？` : "すべてのロックを解除しますか？")) {
       saveHistory();
-      setLockedCells({});
+      if (multiUnit) {
+        setLockedCells((prev) => {
+          const n = { ...prev };
+          homeStaff.forEach((st) => {
+            delete n[st.id];
+          });
+          return n;
+        });
+      } else {
+        setLockedCells({});
+      }
       setScheduleStep(step);
       setMessage({ text: "すべてのロックを解除しました。", type: "info" });
     }
@@ -1117,21 +1511,23 @@ function App() {
   const handlePrevMonthNightSet = (staffIds) => {
     saveHistory();
     setPrevMonthNightStaff(staffIds);
-    const newSchedule = { ...schedule };
-    staffData.forEach((s) => {
+    const newSchedule = { ...fullSchedule };
+    allStaffData.forEach((s) => {
       var _a2;
       if (newSchedule[s.id] && newSchedule[s.id][1] === SHIFT_TYPES.NIGHT_END && !((_a2 = lockedCells[s.id]) == null ? void 0 : _a2[1])) {
-        newSchedule[s.id][1] = SHIFT_TYPES.NONE;
+        newSchedule[s.id] = { ...newSchedule[s.id], 1: SHIFT_TYPES.NONE };
       }
     });
     staffIds.forEach((id) => {
       var _a2, _b;
       if (newSchedule[id]) {
-        if (!((_a2 = lockedCells[id]) == null ? void 0 : _a2[1])) newSchedule[id][1] = SHIFT_TYPES.NIGHT_END;
-        if (!((_b = lockedCells[id]) == null ? void 0 : _b[2])) newSchedule[id][2] = SHIFT_TYPES.OFF;
+        const r = { ...newSchedule[id] };
+        if (!((_a2 = lockedCells[id]) == null ? void 0 : _a2[1])) r[1] = SHIFT_TYPES.NIGHT_END;
+        if (!((_b = lockedCells[id]) == null ? void 0 : _b[2])) r[2] = SHIFT_TYPES.OFF;
+        newSchedule[id] = r;
       }
     });
-    setSchedule(newSchedule);
+    setFullSchedule(newSchedule);
     setScheduleStep(step);
   };
   const togglePrevNightStaff = (staffId) => {
@@ -1167,35 +1563,39 @@ function App() {
   const handleDrop = (e, index) => {
     e.preventDefault();
     if (draggedIndex === null || draggedIndex === index) return;
-    saveHistory();
-    const newStaffData = [...staffData];
-    const draggedItem = newStaffData[draggedIndex];
-    newStaffData.splice(draggedIndex, 1);
-    newStaffData.splice(index, 0, draggedItem);
-    setStaffData(newStaffData);
+    const from = draggedIndex;
     setDraggedIndex(null);
     setDragOverIndex(null);
+    if (from >= homeStaff.length || index >= homeStaff.length) return;
+    saveHistory();
+    reorderHomeStaff(from, index);
   };
   const moveStaff = (index, direction) => {
-    if (direction === -1 && index === 0) return;
-    if (direction === 1 && index === staffData.length - 1) return;
+    const to = index + direction;
+    if (index >= homeStaff.length || to < 0 || to >= homeStaff.length) return;
     saveHistory();
-    const newStaffData = [...staffData];
-    const targetIndex = index + direction;
-    const item = newStaffData[index];
-    newStaffData.splice(index, 1);
-    newStaffData.splice(targetIndex, 0, item);
-    setStaffData(newStaffData);
+    reorderHomeStaff(index, to);
+  };
+  const reorderHomeStaff = (from, to) => {
+    const ids = homeStaff.map((st) => st.id);
+    const [moved] = ids.splice(from, 1);
+    ids.splice(to, 0, moved);
+    const byId = {};
+    allStaffData.forEach((st) => {
+      byId[st.id] = st;
+    });
+    let k = 0;
+    setAllStaffData(allStaffData.map((st) => unitOfStaff(st) === activeUnit ? byId[ids[k++]] : st));
   };
   const weekdayFixMap = useMemo(() => {
     const m = {};
-    staffData.forEach((s) => {
+    allStaffData.forEach((s) => {
       if (s.isCustomTime && s.useWeekdayPattern && Array.isArray(s.weekdayPattern)) {
         m[s.id] = s.weekdayPattern;
       }
     });
     return m;
-  }, [staffData]);
+  }, [allStaffData]);
   const getWeekdayFix = (staffId, day) => {
     const pat = weekdayFixMap[staffId];
     if (!pat) return "";
@@ -1225,6 +1625,7 @@ function App() {
   };
   const applyWeekdayPattern = (sched) => {
     staffData.forEach((s) => {
+      if (s._guest) return;
       const pat = weekdayFixMap[s.id];
       if (!pat) return;
       if (!sched[s.id]) sched[s.id] = {};
@@ -1233,6 +1634,7 @@ function App() {
         const fix = pat[c.day] || "";
         if (!fix) return;
         if ((_a2 = lockedCells[s.id]) == null ? void 0 : _a2[c.date]) return;
+        if (sched[s.id][c.date] === AWAY_SHIFT) return;
         const req = (_c = (_b = shiftRules[s.id]) == null ? void 0 : _b[c.date]) == null ? void 0 : _c.requested;
         if (req) return;
         sched[s.id][c.date] = fix === "off" ? SHIFT_TYPES.OFF : SHIFT_TYPES.DAY;
@@ -1245,10 +1647,15 @@ function App() {
     return (((_b = (_a2 = shiftRules[staffId]) == null ? void 0 : _a2[day]) == null ? void 0 : _b.ngs) || []).includes(shiftType);
   };
   const isCellLocked = (staffId, day, currentSched) => {
-    var _a2, _b, _c, _d;
-    if ((_a2 = lockedCells[staffId]) == null ? void 0 : _a2[day]) return true;
-    const requested = (_c = (_b = shiftRules[staffId]) == null ? void 0 : _b[day]) == null ? void 0 : _c.requested;
-    if (requested && ((_d = currentSched[staffId]) == null ? void 0 : _d[day]) === requested) return true;
+    var _a2, _b, _c, _d, _e, _f, _g;
+    if (guestIds.has(staffId)) return true;
+    const hv = (_a2 = helpAssign[staffId]) == null ? void 0 : _a2[day];
+    if (hv && hv !== activeUnit) return true;
+    const hp = (_b = helpAssign[staffId]) == null ? void 0 : _b[day - 1];
+    if (hp && hp !== activeUnit && ((_c = fullSchedule[staffId]) == null ? void 0 : _c[day - 1]) === SHIFT_TYPES.NIGHT) return true;
+    if ((_d = lockedCells[staffId]) == null ? void 0 : _d[day]) return true;
+    const requested = (_f = (_e = shiftRules[staffId]) == null ? void 0 : _e[day]) == null ? void 0 : _f.requested;
+    if (requested && ((_g = currentSched[staffId]) == null ? void 0 : _g[day]) === requested) return true;
     if (getWeekdayFix(staffId, day)) return true;
     return false;
   };
@@ -1367,7 +1774,7 @@ function App() {
       }
     }
     const groupNight = staffData.filter((s) => ["A", "D"].includes(s.group));
-    const averageTarget = totalNightSlots / (groupNight.length || 1);
+    const averageTarget = Math.max(0, totalNightSlots - guestNightSlots) / (groupNight.filter((s) => !s._guest).length || 1);
     const target = typeof nightTargets[staffId] === "number" && nightTargets[staffId] > 0 ? nightTargets[staffId] : averageTarget;
     let currentCount = 0;
     for (let d = 1; d <= daysInMonth; d++) {
@@ -1523,7 +1930,7 @@ function App() {
         }
       });
       const nightNeed = nightShiftCount;
-      const nightEndNeed = d === 1 ? prevMonthNightStaff.length : nightShiftCount;
+      const nightEndNeed = d === 1 ? prevMonthNightStaff.filter((id) => homeStaff.some((st) => st.id === id)).length : nightShiftCount;
       const A = availableForDayCount - (nightNeed + nightEndNeed);
       const B = targetDayCount - assignedDayStaff;
       if (A - B <= 1 && B > 0) {
@@ -1593,7 +2000,7 @@ function App() {
         }
       }
     });
-    const averageTarget = totalNightSlots / (groupNight.length || 1);
+    const averageTarget = Math.max(0, totalNightSlots - guestNightSlots) / (groupNight.filter((s) => !s._guest).length || 1);
     const canFillDayShifts = (dayToCheck, currentSched) => {
       if (dayToCheck < 1 || dayToCheck > daysInMonth) return true;
       const target = getTargetForDay(dayToCheck, calendar[dayToCheck - 1].day);
@@ -2099,7 +2506,7 @@ function App() {
         const hasExplicitTarget = typeof nightTargets[s.id] === "number" && nightTargets[s.id] > 0;
         const t = hasExplicitTarget ? nightTargets[s.id] : averageTarget;
         balance += Math.abs(c - t) * 10;
-        if (hasExplicitTarget && c !== t) {
+        if (hasExplicitTarget && c !== t && !s._guest) {
           cat.target += Math.abs(c - t);
           targetMismatches.push({ name: s.name, target: t, actual: c });
         }
@@ -2324,6 +2731,52 @@ function App() {
     const ev = best.ev;
     if (ev.unfilled > 0) {
       const dayList = ev.shortageByDay.map((x) => `${x.day}日(不足${x.short})`).join("、");
+      const canBorrowNight = multiUnit && allStaffData.some((st) => unitOfStaff(st) !== activeUnit && ["A", "D"].includes(st.group) && (st.helpUnits || []).includes(activeUnit));
+      if (canBorrowNight) {
+        const sched2 = JSON.parse(JSON.stringify(best.sched));
+        staffData.forEach((st) => {
+          if (st._guest || !["A", "D"].includes(st.group)) return;
+          const capPhys = Math.floor((daysInMonth - getTargetOffDays(st, sched2)) / 2) - 1;
+          const t = nightTargets[st.id];
+          const cap = typeof t === "number" && t > 0 ? Math.min(t, capPhys) : capPhys;
+          const nightsOf = () => {
+            const a = [];
+            for (let d = 1; d <= daysInMonth; d++) if (sched2[st.id][d] === SHIFT_TYPES.NIGHT) a.push(d);
+            return a;
+          };
+          let ns = nightsOf();
+          while (ns.length > cap) {
+            let pick = null;
+            ns.forEach((d, i) => {
+              if (isCellLocked(st.id, d, sched2)) return;
+              if (d + 1 <= daysInMonth && isCellLocked(st.id, d + 1, sched2)) return;
+              const gap = (i > 0 ? d - ns[i - 1] : 99) + (i < ns.length - 1 ? ns[i + 1] - d : 99);
+              if (!pick || gap < pick.gap) pick = { d, gap };
+            });
+            if (!pick) break;
+            sched2[st.id][pick.d] = SHIFT_TYPES.NONE;
+            if (pick.d + 1 <= daysInMonth && sched2[st.id][pick.d + 1] === SHIFT_TYPES.NIGHT_END) sched2[st.id][pick.d + 1] = SHIFT_TYPES.NONE;
+            ns = nightsOf();
+          }
+        });
+        const shortDays = [];
+        for (let d = 1; d <= daysInMonth; d++) {
+          const c = staffData.filter((st) => {
+            var _a2;
+            return ((_a2 = sched2[st.id]) == null ? void 0 : _a2[d]) === SHIFT_TYPES.NIGHT;
+          }).length;
+          if (c < nightShiftCount) shortDays.push({ day: d, short: nightShiftCount - c });
+        }
+        const shortList = shortDays.map((x) => `${x.day}日(不足${x.short})`).join("、");
+        setSchedule(sched2);
+        setScheduleStep(step);
+        setNightViolations({ unfilled: shortDays.reduce((a, x) => a + x.short, 0), shortageByDay: shortDays, items: [], hardFail: false, needHelp: true });
+        setMessage({
+          text: `Step 2: このユニットの職員だけでは夜勤が足りません → ${shortList}。足りない日を空けたまま配置しました（公休が取れるよう、1人あたりの夜勤回数も抑えています）。すべてのユニットで「日勤一括配置」まで進めたあと、「🤝 応援」で他のユニットから夜勤の応援を入れてください。`,
+          type: "info"
+        });
+        return;
+      }
       setNightViolations({
         unfilled: ev.unfilled,
         shortageByDay: ev.shortageByDay,
@@ -2498,10 +2951,10 @@ function App() {
       ].includes(v);
     };
     const earlyCapableIds = (d, sched, exceptId) => staffData.filter(
-      (st) => st.group !== "C" && st.id !== exceptId && canWorkDayAt(st, d, sched) && !isNg(st.id, d, SHIFT_TYPES.EARLY) && !prevBlocksEarly(getShiftSafe(st.id, d - 1, sched))
+      (st) => st.group !== "C" && st.id !== exceptId && canWorkDayAt(st, d, sched) && (!st._guest || [SHIFT_TYPES.EARLY, SHIFT_TYPES.EARLY_DAY].includes(sched[st.id][d])) && !isNg(st.id, d, SHIFT_TYPES.EARLY) && !prevBlocksEarly(getShiftSafe(st.id, d - 1, sched))
     ).map((st) => st.id);
     const eveningCapableIds = (d, sched, exceptId) => staffData.filter(
-      (st) => st.group !== "C" && st.id !== exceptId && canWorkDayAt(st, d, sched) && !isNg(st.id, d, SHIFT_TYPES.DAY_LATE) && (d + 1 > daysInMonth || !nextBlocksEvening(sched[st.id][d + 1]))
+      (st) => st.group !== "C" && st.id !== exceptId && canWorkDayAt(st, d, sched) && (!st._guest || [SHIFT_TYPES.LATE, SHIFT_TYPES.DAY_LATE].includes(sched[st.id][d])) && !isNg(st.id, d, SHIFT_TYPES.DAY_LATE) && (d + 1 > daysInMonth || !nextBlocksEvening(sched[st.id][d + 1]))
     ).map((st) => st.id);
     const keepsEarlyEveningSlots = (d, sched, exceptId) => {
       const needEarly = getEarlyTargetForDay(calendar[d - 1].day) > 0;
@@ -3346,12 +3799,339 @@ function App() {
       setMessage({ text: "Step 4: 早番・遅番を振り分けました。次は「早遅均」で別パターンを生成できます。", type: "success" });
     }
   };
+  const runAutoHelp = () => {
+    if (!multiUnit) return;
+    const N = SHIFT_TYPES;
+    const S = JSON.parse(JSON.stringify(fullSchedule));
+    const H = JSON.parse(JSON.stringify(helpAssign));
+    const DAYTYPES = [N.DAY, N.EARLY, N.EARLY_DAY, N.LATE, N.DAY_LATE];
+    const isOffLike = (v) => [N.OFF, N.PAID, N.REFRESH].includes(v);
+    const cfgOf = (uid) => {
+      const cur = uid === activeUnit;
+      const us = cur ? { morningTargets, earlyTargets, eveningTarget, nightShiftCount, nightRequiredQuals } : unitSettingsRef.current[uid] || {};
+      const um = cur ? { specificMorningTargets, nightShiftCount } : unitMonthRef.current[uid] || {};
+      const mt = Array.isArray(us.morningTargets) && us.morningTargets.length === 7 ? us.morningTargets : DEFAULT_MORNING_TARGETS;
+      const et = Array.isArray(us.earlyTargets) && us.earlyTargets.length === 7 ? us.earlyTargets : DEFAULT_EARLY_TARGETS;
+      return {
+        morning: (d, dow) => um.specificMorningTargets && um.specificMorningTargets[d] !== void 0 ? um.specificMorningTargets[d] : mt[dow],
+        early: (dow) => typeof et[dow] === "number" && et[dow] >= 0 ? et[dow] : 1,
+        evening: typeof us.eveningTarget === "number" ? us.eveningTarget : DEFAULT_EVENING_TARGET,
+        night: typeof um.nightShiftCount === "number" ? um.nightShiftCount : typeof us.nightShiftCount === "number" ? us.nightShiftCount : 2,
+        quals: (us.nightRequiredQuals || []).filter((q) => qualificationOptions.includes(q))
+      };
+    };
+    const cfg = {};
+    unitIds.forEach((u) => {
+      cfg[u] = cfgOf(u);
+    });
+    const ready = {};
+    unitIds.forEach((u) => {
+      const mem = allStaffData.filter((st) => unitOfStaff(st) === u);
+      ready[u] = mem.length > 0 && mem.every((st) => calendar.every((c) => {
+        var _a2;
+        return (((_a2 = S[st.id]) == null ? void 0 : _a2[c.date]) || N.NONE) !== N.NONE;
+      }));
+    });
+    const notReady = unitIds.filter((u) => !ready[u]);
+    if (unitIds.filter((u) => ready[u]).length < 2) {
+      setMessage({ text: `🤝 応援は、2つ以上のユニットでシフトが入りきってから使えます（各ユニットでステップ3「日勤一括配置」まで進めてください）。まだ空欄があるユニット：${notReady.map(unitName).join("、")}`, type: "error" });
+      return;
+    }
+    const unitAt = (st, d) => {
+      var _a2;
+      return ((_a2 = H[st.id]) == null ? void 0 : _a2[d]) || unitOfStaff(st);
+    };
+    const sumW = (uid, d, pred) => allStaffData.reduce((a, st) => {
+      var _a2;
+      const v = (_a2 = S[st.id]) == null ? void 0 : _a2[d];
+      return v && unitAt(st, d) === uid && pred(v) ? a + headWeight(st) : a;
+    }, 0);
+    const morningOf = (uid, d) => sumW(uid, d, (v) => MORNING_PRESENT_SHIFTS.includes(v));
+    const earlyOf = (uid, d) => sumW(uid, d, (v) => v === N.EARLY || v === N.EARLY_DAY);
+    const eveningOf = (uid, d) => sumW(uid, d, (v) => EVENING_PRESENT_SHIFTS.includes(v));
+    const nightsOf = (uid, d) => allStaffData.filter((st) => {
+      var _a2;
+      return ((_a2 = S[st.id]) == null ? void 0 : _a2[d]) === N.NIGHT && unitAt(st, d) === uid;
+    });
+    const fixedAt = (id, d) => {
+      var _a2, _b, _c, _d;
+      return !!((_a2 = lockedCells[id]) == null ? void 0 : _a2[d]) || !!((_c = (_b = shiftRules[id]) == null ? void 0 : _b[d]) == null ? void 0 : _c.requested) || !!getWeekdayFix(id, d) || !!((_d = H[id]) == null ? void 0 : _d[d]);
+    };
+    const getAt = (id, row, k) => k >= 1 && k <= daysInMonth ? row[k] || N.NONE : getShiftSafe(id, k, S);
+    const maxWorkRun = (row) => {
+      let mx = 0, run = 0;
+      for (let k = 1; k <= daysInMonth; k++) {
+        if (row[k] && isWorkDay(row[k])) {
+          run++;
+          if (run > mx) mx = run;
+        } else run = 0;
+      }
+      return mx;
+    };
+    const maxOffRun = (row) => {
+      let mx = 0, run = 0;
+      for (let k = 1; k <= daysInMonth; k++) {
+        if (isOffLike(row[k])) {
+          run++;
+          if (run > mx) mx = run;
+        } else run = 0;
+      }
+      return mx;
+    };
+    const nightCountOf = (id) => calendar.reduce((a, c) => {
+      var _a2;
+      return a + (((_a2 = S[id]) == null ? void 0 : _a2[c.date]) === N.NIGHT ? 1 : 0);
+    }, 0);
+    const planNightHelp = (st, X, d) => {
+      const id = st.id, Y = unitOfStaff(st), cy = cfg[Y], w = headWeight(st);
+      const row = { ...S[id] || {} };
+      const before = { ...row };
+      const free = (k) => k >= 1 && k <= daysInMonth && !fixedAt(id, k);
+      if (!free(d) || !(DAYTYPES.includes(row[d]) || row[d] === N.OFF)) return null;
+      if (isNg(id, d, N.NIGHT)) return null;
+      const prev = getAt(id, row, d - 1);
+      if (prev === N.NIGHT || prev === N.NIGHT_END) return null;
+      if (!restOk(prev, N.NIGHT)) return null;
+      if (d + 1 <= daysInMonth) {
+        if (!free(d + 1) || !(DAYTYPES.includes(row[d + 1]) || row[d + 1] === N.OFF)) return null;
+        if (isNg(id, d + 1, N.NIGHT_END)) return null;
+      }
+      if (d + 2 <= daysInMonth) {
+        const nn = row[d + 2];
+        if (!(DAYTYPES.includes(nn) || isOffLike(nn))) return null;
+        if (DAYTYPES.includes(nn) && (!free(d + 2) || isNg(id, d + 2, N.OFF))) return null;
+      }
+      const mates = nightsOf(X, d);
+      if (mates.some((o) => (o.forbiddenPairs || []).includes(id) || (st.forbiddenPairs || []).includes(o.id))) return null;
+      const tgt = nightTargetsBase[id];
+      const cap = typeof tgt === "number" && tgt > 0 ? tgt + 1 : 8;
+      if (nightCountOf(id) + 1 > cap) return null;
+      const offs = () => calendar.reduce((a, c) => a + (row[c.date] === N.OFF ? 1 : 0), 0);
+      const offBefore = offs();
+      row[d] = N.NIGHT;
+      if (d + 1 <= daysInMonth) row[d + 1] = N.NIGHT_END;
+      if (d + 2 <= daysInMonth && DAYTYPES.includes(row[d + 2])) row[d + 2] = N.OFF;
+      let diff = offs() - offBefore;
+      const near = (k) => k >= d - 1 && k <= d + 2;
+      while (diff > 0) {
+        let pick = null;
+        for (let k = 1; k <= daysInMonth; k++) {
+          if (near(k) || row[k] !== N.OFF || !free(k) || isNg(id, k, N.DAY)) continue;
+          const pv = getAt(id, row, k - 1), nx = k + 1 <= daysInMonth ? row[k + 1] : N.NONE;
+          if (pv === N.NIGHT || pv === N.NIGHT_END) continue;
+          if (!restOk(pv, N.DAY) || !restOk(N.DAY, nx)) continue;
+          row[k] = N.DAY;
+          const ok = maxWorkRun(row) <= Math.max(getMaxRun(st), maxWorkRun(before));
+          row[k] = N.OFF;
+          if (!ok) continue;
+          const sc = cy.morning(k, calendar[k - 1].day) - morningOf(Y, k);
+          if (!pick || sc > pick.sc) pick = { k, sc };
+        }
+        if (!pick) return null;
+        row[pick.k] = N.DAY;
+        diff--;
+      }
+      while (diff < 0) {
+        let pick = null;
+        for (let k = 1; k <= daysInMonth; k++) {
+          if (near(k) || row[k] !== N.DAY || !free(k) || isNg(id, k, N.OFF)) continue;
+          const slack = morningOf(Y, k) - w - cy.morning(k, calendar[k - 1].day);
+          if (slack < 0) continue;
+          row[k] = N.OFF;
+          const ok = maxOffRun(row) <= Math.max(2, maxOffRun(before));
+          row[k] = N.DAY;
+          if (!ok) continue;
+          if (!pick || slack > pick.sc) pick = { k, sc: slack };
+        }
+        if (!pick) return null;
+        row[pick.k] = N.OFF;
+        diff++;
+      }
+      if (maxWorkRun(row) > Math.max(getMaxRun(st), maxWorkRun(before))) return null;
+      let penalty = 0;
+      for (let k = 1; k <= daysInMonth; k++) {
+        const was = before[k], now = row[k];
+        if (was === now || !DAYTYPES.includes(was) || DAYTYPES.includes(now)) continue;
+        const dow = calendar[k - 1].day;
+        if (MORNING_PRESENT_SHIFTS.includes(was)) {
+          const after = morningOf(Y, k) - w, need = cy.morning(k, dow);
+          if (after < need - 1) return null;
+          if (after < need) penalty += 30;
+        }
+        if ((was === N.EARLY || was === N.EARLY_DAY) && earlyOf(Y, k) - w < cy.early(dow)) return null;
+        if (EVENING_PRESENT_SHIFTS.includes(was) && eveningOf(Y, k) - w < cy.evening) return null;
+      }
+      const changes = [];
+      for (let k = 1; k <= daysInMonth; k++) if (before[k] !== row[k]) changes.push([k, row[k]]);
+      let score = -penalty - changes.length * 2 - nightCountOf(id) * 3;
+      const xq = cfg[X].quals;
+      if (xq.length > 0 && !mates.some((o) => xq.includes(o.qualification)) && xq.includes(st.qualification)) score += 100;
+      return { changes, score };
+    };
+    let nightMoves = 0;
+    unitIds.forEach((X) => {
+      if (!ready[X]) return;
+      for (let d = 1; d <= daysInMonth; d++) {
+        for (let guard = 0; guard < 5 && nightsOf(X, d).length < cfg[X].night; guard++) {
+          let best = null;
+          allStaffData.forEach((st) => {
+            const Y = unitOfStaff(st);
+            if (Y === X || !ready[Y] || !["A", "D"].includes(st.group) || !(st.helpUnits || []).includes(X)) return;
+            const plan = planNightHelp(st, X, d);
+            if (plan && (!best || plan.score > best.plan.score)) best = { st, plan };
+          });
+          if (!best) break;
+          const id = best.st.id;
+          S[id] = { ...S[id] || {} };
+          best.plan.changes.forEach(([k, v]) => {
+            S[id][k] = v;
+          });
+          H[id] = { ...H[id] || {}, [d]: X };
+          nightMoves++;
+        }
+      }
+    });
+    let dayMoves = 0;
+    for (let pass = 0; pass < 3; pass++) {
+      let changed = false;
+      unitIds.forEach((X) => {
+        if (!ready[X]) return;
+        const cx = cfg[X];
+        for (let d = 1; d <= daysInMonth; d++) {
+          const dow = calendar[d - 1].day;
+          for (let guard = 0; guard < 10; guard++) {
+            const needM = morningOf(X, d) < cx.morning(d, dow);
+            const needE = earlyOf(X, d) < cx.early(dow);
+            const needV = eveningOf(X, d) < cx.evening;
+            if (!needM && !needE && !needV) break;
+            let best = null;
+            allStaffData.forEach((st) => {
+              var _a2, _b;
+              const Y = unitOfStaff(st);
+              if (Y === X || !ready[Y] || !(st.helpUnits || []).includes(X) || ((_a2 = H[st.id]) == null ? void 0 : _a2[d])) return;
+              const v = (_b = S[st.id]) == null ? void 0 : _b[d];
+              const isM = MORNING_PRESENT_SHIFTS.includes(v);
+              const isE = v === N.EARLY || v === N.EARLY_DAY;
+              const isV = EVENING_PRESENT_SHIFTS.includes(v);
+              const gain = (needM && isM ? 1 : 0) + (needE && isE ? 1 : 0) + (needV && isV ? 1 : 0);
+              if (gain === 0) return;
+              const w = headWeight(st), cy = cfg[Y];
+              if (isM && morningOf(Y, d) - w < cy.morning(d, dow)) return;
+              if (isE && earlyOf(Y, d) - w < cy.early(dow)) return;
+              if (isV && eveningOf(Y, d) - w < cy.evening) return;
+              const score = gain * 100 + (morningOf(Y, d) - cy.morning(d, dow));
+              if (!best || score > best.score) best = { st, score };
+            });
+            if (!best) break;
+            H[best.st.id] = { ...H[best.st.id] || {}, [d]: X };
+            dayMoves++;
+            changed = true;
+          }
+        }
+      });
+      if (!changed) break;
+    }
+    let offMoves = 0;
+    allStaffData.forEach((st) => {
+      var _a2;
+      const X = unitOfStaff(st);
+      if (!ready[X]) return;
+      const w = headWeight(st), cx = cfg[X];
+      const countOff = () => calendar.reduce((a, c) => {
+        var _a3;
+        return a + (((_a3 = S[st.id]) == null ? void 0 : _a3[c.date]) === N.OFF ? 1 : 0);
+      }, 0);
+      let lack = getTargetOffDays(st, S) - countOff();
+      for (let guard = 0; guard < 10 && lack > 0; guard++) {
+        let best = null;
+        for (let k = 1; k <= daysInMonth; k++) {
+          if (((_a2 = S[st.id]) == null ? void 0 : _a2[k]) !== N.DAY || fixedAt(st.id, k) || isNg(st.id, k, N.OFF)) continue;
+          const dow = calendar[k - 1].day;
+          const row = { ...S[st.id] };
+          const runBefore = maxOffRun(row);
+          row[k] = N.OFF;
+          if (maxOffRun(row) > Math.max(2, runBefore)) continue;
+          const deficit = cx.morning(k, dow) - (morningOf(X, k) - w);
+          let helper = null;
+          if (deficit > 0) {
+            allStaffData.forEach((h) => {
+              var _a3, _b;
+              const Y = unitOfStaff(h);
+              if (Y === X || !ready[Y] || !(h.helpUnits || []).includes(X) || ((_a3 = H[h.id]) == null ? void 0 : _a3[k])) return;
+              const v = (_b = S[h.id]) == null ? void 0 : _b[k];
+              if (!MORNING_PRESENT_SHIFTS.includes(v)) return;
+              const hw = headWeight(h);
+              if (hw < deficit) return;
+              if (morningOf(Y, k) - hw < cfg[Y].morning(k, dow)) return;
+              if ((v === N.EARLY || v === N.EARLY_DAY) && earlyOf(Y, k) - hw < cfg[Y].early(dow)) return;
+              if (EVENING_PRESENT_SHIFTS.includes(v) && eveningOf(Y, k) - hw < cfg[Y].evening) return;
+              const sc2 = morningOf(Y, k) - cfg[Y].morning(k, dow);
+              if (!helper || sc2 > helper.sc) helper = { h, sc: sc2 };
+            });
+            if (!helper) continue;
+          }
+          const sc = (deficit > 0 ? 0 : 50) + (morningOf(X, k) - cx.morning(k, dow));
+          if (!best || sc > best.sc) best = { k, helper, sc };
+        }
+        if (!best) break;
+        S[st.id] = { ...S[st.id], [best.k]: N.OFF };
+        if (best.helper) H[best.helper.h.id] = { ...H[best.helper.h.id] || {}, [best.k]: X };
+        offMoves++;
+        lack--;
+      }
+    });
+    const remain = [];
+    unitIds.forEach((X) => {
+      if (!ready[X]) return;
+      const cx = cfg[X];
+      let nN = 0, nM = 0, nE = 0, nV = 0;
+      for (let d = 1; d <= daysInMonth; d++) {
+        const dow = calendar[d - 1].day;
+        if (nightsOf(X, d).length < cx.night) nN++;
+        if (morningOf(X, d) < cx.morning(d, dow)) nM++;
+        if (earlyOf(X, d) < cx.early(dow)) nE++;
+        if (eveningOf(X, d) < cx.evening) nV++;
+      }
+      const parts = [];
+      if (nN) parts.push(`夜勤${nN}日`);
+      if (nM) parts.push(`朝ピーク${nM}日`);
+      if (nE) parts.push(`早番${nE}日`);
+      if (nV) parts.push(`夕方${nV}日`);
+      if (parts.length) remain.push(`${unitName(X)}：${parts.join("・")}`);
+    });
+    const skipped = notReady.length ? `（空欄が残る${notReady.map(unitName).join("・")}は対象外）` : "";
+    if (nightMoves === 0 && dayMoves === 0 && offMoves === 0) {
+      setMessage({
+        text: remain.length ? `🤝 応援できる組み合わせは見つかりませんでした。足りない日 → ${remain.join(" ／ ")}。職員設定の「応援可」と、応援を出すユニットの人数に余裕があるかを確認してください。${skipped}` : `🤝 どのユニットも不足はありません。応援は不要です。${skipped}`,
+        type: remain.length ? "error" : "success"
+      });
+      return;
+    }
+    saveHistory();
+    setFullSchedule(S);
+    setHelpAssign(H);
+    setScheduleStep(step);
+    setMessage({
+      text: `🤝 応援を入れました（夜勤${nightMoves}件・日中${dayMoves}件${offMoves ? `・公休の取り戻し${offMoves}件` : ""}）。応援のマスには行き先のユニットが表示されます（↩️ 戻るで取り消せます）。${remain.length ? "まだ足りない日 → " + remain.join(" ／ ") + "。" : "すべてのユニットの不足が埋まりました。"}${skipped}`,
+      type: remain.length ? "info" : "success"
+    });
+  };
   const downloadCSV = () => {
     let csvContent = "\uFEFF";
-    csvContent += "氏名,グループ,職種," + calendar.map((c) => `${c.date}(${WEEKDAYS[c.day]})`).join(",") + "\n";
-    staffData.forEach((staff) => {
+    csvContent += "氏名,グループ,職種," + (multiUnit ? "ユニット," : "") + calendar.map((c) => `${c.date}(${WEEKDAYS[c.day]})`).join(",") + "\n";
+    const ordered = [];
+    units.forEach((u) => allStaffData.forEach((st) => {
+      if (unitOfStaff(st) === u.id) ordered.push(st);
+    }));
+    ordered.forEach((staff) => {
       const row = [staff.name, staff.group, staff.qualification || ""];
-      calendar.forEach((c) => row.push(schedule[staff.id][c.date] || ""));
+      if (multiUnit) row.push(unitName(unitOfStaff(staff)));
+      calendar.forEach((c) => {
+        var _a2, _b;
+        const v = ((_a2 = fullSchedule[staff.id]) == null ? void 0 : _a2[c.date]) || "";
+        const h = (_b = helpAssign[staff.id]) == null ? void 0 : _b[c.date];
+        row.push(v && h && h !== unitOfStaff(staff) ? `${v}(${unitName(h)})` : v);
+      });
       csvContent += row.join(",") + "\n";
     });
     const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
@@ -3436,9 +4216,9 @@ function App() {
   const calculateCounts = (staffId) => {
     var _a2;
     let counts = { night: 0, off: 0, early: 0, day: 0, late: 0 };
-    if (!schedule || !schedule[staffId]) return counts;
+    if (!fullSchedule || !fullSchedule[staffId]) return counts;
     for (let d = 1; d <= daysInMonth; d++) {
-      const s = (_a2 = schedule[staffId]) == null ? void 0 : _a2[d];
+      const s = (_a2 = fullSchedule[staffId]) == null ? void 0 : _a2[d];
       if (s === SHIFT_TYPES.NIGHT) counts.night++;
       if (s === SHIFT_TYPES.OFF) counts.off++;
       if (s === SHIFT_TYPES.EARLY) counts.early++;
@@ -3549,8 +4329,8 @@ function App() {
     }
   }, [uiMode]);
   const mobileUI = uiMode === "mobile" || uiMode === "auto" && isNarrow;
-  const isPristineStaff = staffData.length === INITIAL_STAFF_DATA.length && staffData.every((s, i) => s.name === INITIAL_STAFF_DATA[i].name);
-  const isDemoStaff = staffData.length > 0 && staffData.every((s) => String(s.id).startsWith("demo_"));
+  const isPristineStaff = allStaffData.length === INITIAL_STAFF_DATA.length && allStaffData.every((s, i) => s.name === INITIAL_STAFF_DATA[i].name);
+  const isDemoStaff = allStaffData.length > 0 && allStaffData.every((s) => String(s.id).startsWith("demo_"));
   useEffect(() => {
     if (mDay > daysInMonth) setMDay(daysInMonth);
   }, [daysInMonth]);
@@ -3603,7 +4383,11 @@ function App() {
         nextLocked[id][day] = true;
       }
     });
-    setStaffData(staff);
+    setAllStaffData(staff.map((st) => ({ ...st, unit: "u1", helpUnits: [] })));
+    setUnits([{ id: "u1", name: "ユニット1" }]);
+    setActiveUnit("u1");
+    setHelpAssign({});
+    unitMonthRef.current = {};
     setNightTargets({});
     setDayTargets([...DEFAULT_DAY_TARGETS]);
     setMorningTargets([...DEFAULT_MORNING_TARGETS]);
@@ -3611,7 +4395,7 @@ function App() {
     setEveningTarget(DEFAULT_EVENING_TARGET);
     setNightShiftCount(2);
     setRequiredOffDays(calcDefaultOffDays(year, month));
-    setSchedule(nextSchedule);
+    setFullSchedule(nextSchedule);
     setShiftRules(nextRules);
     setLockedCells(nextLocked);
     setPrevMonthSchedule({});
@@ -3700,6 +4484,28 @@ function App() {
     return { items, ok: items.every((i) => i.ok) };
   };
   const fmtNum = (n) => Number.isInteger(n) ? String(n) : n.toFixed(1);
+  const renderUnitTabs = () => /* @__PURE__ */ React.createElement("div", { className: "flex items-end gap-1 px-2 pt-1.5 bg-slate-100 border-b border-slate-300 overflow-x-auto hide-scrollbar shrink-0" }, units.map((u) => {
+    const on = u.id === activeUnit;
+    const cnt = allStaffData.filter((st) => unitOfStaff(st) === u.id).length;
+    return /* @__PURE__ */ React.createElement(
+      "button",
+      {
+        key: u.id,
+        onClick: () => switchUnit(u.id),
+        className: `px-3 sm:px-4 py-1.5 rounded-t-lg text-xs sm:text-sm font-bold whitespace-nowrap border border-b-0 -mb-px ${on ? "bg-white text-blue-700 border-slate-300" : "bg-slate-200 text-slate-500 border-transparent hover:bg-slate-300"}`
+      },
+      u.name,
+      /* @__PURE__ */ React.createElement("span", { className: "ml-1 text-[10px] font-normal opacity-70" }, cnt, "名")
+    );
+  }), /* @__PURE__ */ React.createElement(
+    "button",
+    {
+      onClick: runAutoHelp,
+      className: "ml-auto mb-1 px-2.5 sm:px-3 py-1 rounded bg-orange-500 text-white text-xs sm:text-sm font-bold whitespace-nowrap hover:bg-orange-600 shadow-sm",
+      title: "すべてのユニットのシフトができたあとに押すと、足りない日に他のユニットの「応援可」の職員を入れます"
+    },
+    "🤝 応援"
+  ));
   const renderStepActions = () => {
     const btn = "h-10 px-3 rounded-lg font-bold text-sm whitespace-nowrap shadow-sm active:scale-95 transition-transform flex items-center gap-1 shrink-0";
     const next = (to, text) => /* @__PURE__ */ React.createElement("button", { onClick: () => {
@@ -3725,18 +4531,23 @@ function App() {
         className: `shrink-0 px-3 h-9 rounded-full text-sm font-bold border whitespace-nowrap ${s.id === mStaff.id ? "bg-slate-800 text-white border-slate-800" : "bg-white text-gray-700 border-gray-300"}`
       },
       s.name
-    ))), /* @__PURE__ */ React.createElement("div", { className: "px-3 pt-3" }, /* @__PURE__ */ React.createElement("div", { className: "bg-white rounded-xl border shadow-sm p-3" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2 mb-2" }, /* @__PURE__ */ React.createElement("span", { className: "font-bold text-base" }, mStaff.name), /* @__PURE__ */ React.createElement("span", { className: `text-[11px] px-1.5 py-0.5 rounded ${isNightGroup ? "bg-indigo-100 text-indigo-700" : "bg-teal-100 text-teal-700"}` }, mStaff.role, mStaff.isCustomTime ? "・非常勤" : ""), mStaff.qualification && /* @__PURE__ */ React.createElement("span", { className: "text-[11px] px-1.5 py-0.5 rounded bg-gray-100 text-gray-600" }, mStaff.qualification)), /* @__PURE__ */ React.createElement("div", { className: "flex gap-1.5" }, stat("夜勤", isNightGroup ? counts.night : "-", nightWarn ? "bg-red-50 text-red-700" : "bg-indigo-50 text-indigo-700", typeof target === "number" ? `/${target}` : ""), stat("公休", counts.off, counts.off === targetOff ? "bg-green-50 text-green-700" : "bg-orange-50 text-orange-700", `/${targetOff}`), stat("早番", counts.early, "bg-yellow-50 text-yellow-700"), stat("日勤", counts.day, "bg-cyan-50 text-cyan-700"), stat("遅番", counts.late, "bg-purple-50 text-purple-700")))), /* @__PURE__ */ React.createElement("div", { className: "px-3 py-3 space-y-1.5" }, calendar.map((c) => {
-      var _a2, _b, _c;
-      const shift = ((_a2 = schedule[mStaff.id]) == null ? void 0 : _a2[c.date]) || SHIFT_TYPES.NONE;
-      const rule = (_b = shiftRules[mStaff.id]) == null ? void 0 : _b[c.date];
-      const isLocked = !!((_c = lockedCells[mStaff.id]) == null ? void 0 : _c[c.date]);
+    ))), /* @__PURE__ */ React.createElement("div", { className: "px-3 pt-3" }, /* @__PURE__ */ React.createElement("div", { className: "bg-white rounded-xl border shadow-sm p-3" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2 mb-2" }, /* @__PURE__ */ React.createElement("span", { className: "font-bold text-base" }, mStaff.name), /* @__PURE__ */ React.createElement("span", { className: `text-[11px] px-1.5 py-0.5 rounded ${isNightGroup ? "bg-indigo-100 text-indigo-700" : "bg-teal-100 text-teal-700"}` }, mStaff.role, mStaff.isCustomTime ? "・非常勤" : ""), mStaff._guest && /* @__PURE__ */ React.createElement("span", { className: "text-[11px] px-1.5 py-0.5 rounded bg-orange-100 text-orange-700" }, unitName(unitOfStaff(mStaff)), "から応援"), mStaff.qualification && /* @__PURE__ */ React.createElement("span", { className: "text-[11px] px-1.5 py-0.5 rounded bg-gray-100 text-gray-600" }, mStaff.qualification)), /* @__PURE__ */ React.createElement("div", { className: "flex gap-1.5" }, stat("夜勤", isNightGroup ? counts.night : "-", nightWarn ? "bg-red-50 text-red-700" : "bg-indigo-50 text-indigo-700", typeof target === "number" ? `/${target}` : ""), stat("公休", counts.off, counts.off === targetOff ? "bg-green-50 text-green-700" : "bg-orange-50 text-orange-700", `/${targetOff}`), stat("早番", counts.early, "bg-yellow-50 text-yellow-700"), stat("日勤", counts.day, "bg-cyan-50 text-cyan-700"), stat("遅番", counts.late, "bg-purple-50 text-purple-700")))), /* @__PURE__ */ React.createElement("div", { className: "px-3 py-3 space-y-1.5" }, calendar.map((c) => {
+      var _a2, _b, _c, _d, _e;
+      const viewShift = ((_a2 = schedule[mStaff.id]) == null ? void 0 : _a2[c.date]) || SHIFT_TYPES.NONE;
+      const isAwayM = viewShift === AWAY_SHIFT;
+      const shift = isAwayM ? ((_b = fullSchedule[mStaff.id]) == null ? void 0 : _b[c.date]) || SHIFT_TYPES.NONE : viewShift;
+      const helpLabel = isAwayM ? mStaff._guest ? `${unitName(unitOfStaff(mStaff))}で勤務` : `${unitName((_c = helpAssign[mStaff.id]) == null ? void 0 : _c[c.date])}へ応援` : mStaff._guest ? `${unitName(unitOfStaff(mStaff))}から応援` : "";
+      const rule = (_d = shiftRules[mStaff.id]) == null ? void 0 : _d[c.date];
+      const isLocked = !!((_e = lockedCells[mStaff.id]) == null ? void 0 : _e[c.date]);
       const isReq = (rule == null ? void 0 : rule.requested) && shift === rule.requested;
       const hasNgs = (rule == null ? void 0 : rule.ngs) && rule.ngs.length > 0;
       const warns = [];
-      if (getConsecutiveAlert(mStaff.id, c.date)) warns.push("連勤超過");
-      if (getNightDenseAlert(mStaff.id, c.date)) warns.push("夜勤過密");
-      if (getNightEndDayAlert(mStaff.id, c.date)) warns.push("明け翌日の勤務");
-      return /* @__PURE__ */ React.createElement("div", { key: c.date, className: `flex items-center bg-white rounded-lg border ${warns.length ? "border-red-400 ring-1 ring-red-300" : "border-gray-200"}` }, /* @__PURE__ */ React.createElement("button", { onClick: () => setSelectingShift({ staffId: mStaff.id, day: c.date }), className: "flex-1 flex items-center gap-3 px-3 py-2 text-left active:bg-gray-50 min-w-0" }, /* @__PURE__ */ React.createElement("div", { className: `w-12 shrink-0 ${weekdayColor(c.day)}` }, /* @__PURE__ */ React.createElement("span", { className: "text-lg font-bold" }, c.date), /* @__PURE__ */ React.createElement("span", { className: "text-xs ml-0.5" }, "(", WEEKDAYS[c.day], ")")), /* @__PURE__ */ React.createElement("div", { className: `w-14 h-9 shrink-0 rounded-md border flex items-center justify-center text-sm ${getCellColor(shift, c)} ${shift === SHIFT_TYPES.NONE ? "text-gray-300" : ""}` }, shiftLabel(shift)), /* @__PURE__ */ React.createElement("div", { className: "flex flex-wrap gap-1 min-w-0" }, isReq && /* @__PURE__ */ React.createElement("span", { className: "text-[10px] bg-blue-500 text-white px-1.5 py-0.5 rounded font-bold" }, "希望"), !isLocked && !isReq && getWeekdayFix(mStaff.id, c.date) && shift === (getWeekdayFix(mStaff.id, c.date) === "off" ? SHIFT_TYPES.OFF : SHIFT_TYPES.DAY) && /* @__PURE__ */ React.createElement("span", { className: "text-[10px] bg-emerald-600 text-white px-1.5 py-0.5 rounded font-bold" }, "曜日固定"), hasNgs && /* @__PURE__ */ React.createElement("span", { className: "text-[10px] bg-red-500 text-white px-1.5 py-0.5 rounded font-bold" }, "NG:", rule.ngs.join("・")), warns.map((w) => /* @__PURE__ */ React.createElement("span", { key: w, className: "text-[10px] bg-red-50 text-red-700 border border-red-200 px-1.5 py-0.5 rounded font-bold" }, "⚠ ", w)))), /* @__PURE__ */ React.createElement("button", { onClick: () => toggleLock(mStaff.id, c.date), className: `w-11 h-11 shrink-0 flex items-center justify-center text-base ${isLocked ? "" : "opacity-25"}`, "aria-label": isLocked ? "ロックを解除" : "ロック" }, isLocked ? "🔒" : "🔓"));
+      if (!isAwayM && !mStaff._guest) {
+        if (getConsecutiveAlert(mStaff.id, c.date)) warns.push("連勤超過");
+        if (getNightDenseAlert(mStaff.id, c.date)) warns.push("夜勤過密");
+        if (getNightEndDayAlert(mStaff.id, c.date)) warns.push("明け翌日の勤務");
+      }
+      return /* @__PURE__ */ React.createElement("div", { key: c.date, className: `flex items-center bg-white rounded-lg border ${warns.length ? "border-red-400 ring-1 ring-red-300" : "border-gray-200"}` }, /* @__PURE__ */ React.createElement("button", { onClick: () => setSelectingShift({ staffId: mStaff.id, day: c.date }), className: "flex-1 flex items-center gap-3 px-3 py-2 text-left active:bg-gray-50 min-w-0" }, /* @__PURE__ */ React.createElement("div", { className: `w-12 shrink-0 ${weekdayColor(c.day)}` }, /* @__PURE__ */ React.createElement("span", { className: "text-lg font-bold" }, c.date), /* @__PURE__ */ React.createElement("span", { className: "text-xs ml-0.5" }, "(", WEEKDAYS[c.day], ")")), /* @__PURE__ */ React.createElement("div", { className: `w-14 h-9 shrink-0 rounded-md border flex items-center justify-center text-sm ${getCellColor(shift, c)} ${shift === SHIFT_TYPES.NONE ? "text-gray-300" : ""} ${isAwayM ? "opacity-50" : ""}` }, shiftLabel(shift)), /* @__PURE__ */ React.createElement("div", { className: "flex flex-wrap gap-1 min-w-0" }, helpLabel && /* @__PURE__ */ React.createElement("span", { className: "text-[10px] bg-orange-100 text-orange-700 border border-orange-200 px-1.5 py-0.5 rounded font-bold" }, "🤝 ", helpLabel), isReq && /* @__PURE__ */ React.createElement("span", { className: "text-[10px] bg-blue-500 text-white px-1.5 py-0.5 rounded font-bold" }, "希望"), !isLocked && !isReq && getWeekdayFix(mStaff.id, c.date) && shift === (getWeekdayFix(mStaff.id, c.date) === "off" ? SHIFT_TYPES.OFF : SHIFT_TYPES.DAY) && /* @__PURE__ */ React.createElement("span", { className: "text-[10px] bg-emerald-600 text-white px-1.5 py-0.5 rounded font-bold" }, "曜日固定"), hasNgs && /* @__PURE__ */ React.createElement("span", { className: "text-[10px] bg-red-500 text-white px-1.5 py-0.5 rounded font-bold" }, "NG:", rule.ngs.join("・")), warns.map((w) => /* @__PURE__ */ React.createElement("span", { key: w, className: "text-[10px] bg-red-50 text-red-700 border border-red-200 px-1.5 py-0.5 rounded font-bold" }, "⚠ ", w)))), /* @__PURE__ */ React.createElement("button", { onClick: () => toggleLock(mStaff.id, c.date), className: `w-11 h-11 shrink-0 flex items-center justify-center text-base ${isLocked ? "" : "opacity-25"}`, "aria-label": isLocked ? "ロックを解除" : "ロック" }, isLocked ? "🔒" : "🔓"));
     })));
   };
   const renderMobileDayView = () => {
@@ -3819,7 +4630,7 @@ function App() {
         setDemoRun(-1);
       }
     }, className: "w-full h-12 mb-3 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 text-white font-bold shadow" }, "🧪 サンプルで自動作成を試す"), /* @__PURE__ */ React.createElement("div", { className: "text-[11px] font-bold text-gray-500 mb-1.5" }, "設定"), /* @__PURE__ */ React.createElement("div", { className: "grid grid-cols-4 gap-2 mb-3" }, item("👥", "職員設定", () => setIsStaffModalOpen(true)), item("📊", "人数設定", () => setIsDayTargetModalOpen(true)), item("⏰", "時間設定", () => setIsShiftTimeModalOpen(true)), item("🌙", "前月夜勤", () => setIsPrevNightModalOpen(true))), /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between bg-white border rounded-xl px-3 h-12 mb-3" }, /* @__PURE__ */ React.createElement("span", { className: "text-sm font-bold text-gray-700" }, "公休日数"), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2" }, /* @__PURE__ */ React.createElement("button", { onClick: () => setRequiredOffDays((n) => Math.max(0, n - 1)), className: "w-9 h-9 rounded-full border bg-gray-50 font-bold" }, "−"), /* @__PURE__ */ React.createElement("span", { className: "w-8 text-center font-bold text-lg" }, requiredOffDays), /* @__PURE__ */ React.createElement("button", { onClick: () => setRequiredOffDays((n) => n + 1), className: "w-9 h-9 rounded-full border bg-gray-50 font-bold" }, "＋"), /* @__PURE__ */ React.createElement("span", { className: "text-sm text-gray-500" }, "日"))), /* @__PURE__ */ React.createElement("div", { className: "text-[11px] font-bold text-gray-500 mb-1.5" }, "シフト表"), /* @__PURE__ */ React.createElement("div", { className: "grid grid-cols-4 gap-2 mb-3" }, item("🔒", "一括ロック", handleLockAll), item("🔓", "全解除", handleUnlockAll), item("💾", "CSV保存", downloadCSV), item("🗑️", "リセット", () => {
-      if (confirm("この月のシフト表をリセットしますか？")) initializeSchedule();
+      if (confirm(multiUnit ? `${unitName(activeUnit)}のシフトを空にしますか？（他のユニットはそのままです）` : "この月のシフト表をリセットしますか？")) initializeSchedule("unit");
     }, "text-red-600")), /* @__PURE__ */ React.createElement("div", { className: "grid grid-cols-2 gap-2" }, /* @__PURE__ */ React.createElement("a", { href: "manual.html", target: "_blank", rel: "noopener", className: "h-11 rounded-xl border bg-white flex items-center justify-center text-sm font-bold text-gray-700" }, "📖 使い方"), /* @__PURE__ */ React.createElement("button", { onClick: () => {
       setMMenuOpen(false);
       setUiMode("pc");
@@ -3913,7 +4724,7 @@ function App() {
   const renderChangelog = () => /* @__PURE__ */ React.createElement("div", { className: "fixed inset-0 z-[100] bg-black/50 flex items-center justify-center p-3", onClick: () => setIsChangelogOpen(false) }, /* @__PURE__ */ React.createElement("div", { className: "bg-white rounded-lg w-full max-w-md max-h-[calc(100dvh-24px)] flex flex-col shadow-xl", onClick: (e) => e.stopPropagation() }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between px-4 pt-4 pb-2 border-b" }, /* @__PURE__ */ React.createElement("h3", { className: "font-bold text-lg" }, "📝 更新履歴"), /* @__PURE__ */ React.createElement("button", { onClick: () => setIsChangelogOpen(false), className: "text-gray-400 hover:text-gray-600 font-bold text-xl leading-none px-1", "aria-label": "閉じる" }, "✕")), /* @__PURE__ */ React.createElement("div", { className: "overflow-y-auto px-4 py-3 space-y-4" }, CHANGELOG.map((c, i) => /* @__PURE__ */ React.createElement("div", { key: c.version }, /* @__PURE__ */ React.createElement("div", { className: "flex items-baseline gap-2 mb-1" }, /* @__PURE__ */ React.createElement("span", { className: "font-bold text-sm text-slate-800" }, c.version), /* @__PURE__ */ React.createElement("span", { className: "text-xs text-gray-500" }, c.date.replace(/^(\d+)-(\d+)-(\d+)$/, (m, y, mo, d) => `${y}年${Number(mo)}月${Number(d)}日`)), i === 0 && /* @__PURE__ */ React.createElement("span", { className: "text-[10px] font-bold text-white bg-blue-600 rounded px-1.5 py-0.5" }, "最新")), /* @__PURE__ */ React.createElement("ul", { className: "list-disc pl-5 space-y-0.5 text-sm text-gray-700" }, c.items.map((t, j) => /* @__PURE__ */ React.createElement("li", { key: j }, t)))))), /* @__PURE__ */ React.createElement("div", { className: "px-4 py-3 border-t text-[11px] text-gray-500" }, "Web版はページを開き直すと最新版になります。ダウンロード版をお使いの場合は、もう一度ダウンロードしてください。")));
   const versionBadge = (cls) => /* @__PURE__ */ React.createElement("button", { onClick: openChangelog, title: "更新履歴を見る", className: `relative text-slate-400 hover:text-slate-200 font-mono whitespace-nowrap ${cls}` }, APP_VERSION, hasNewChangelog && /* @__PURE__ */ React.createElement("span", { className: "absolute -top-0.5 -right-1.5 w-1.5 h-1.5 rounded-full bg-red-500", "aria-label": "新しい更新があります" }));
   const renderWelcome = () => /* @__PURE__ */ React.createElement("div", { className: "fixed inset-0 z-[95] bg-black/50 flex items-end sm:items-center justify-center p-3" }, /* @__PURE__ */ React.createElement("div", { className: "bg-white rounded-2xl w-full max-w-md p-5 shadow-2xl pb-[calc(20px+env(safe-area-inset-bottom))]" }, /* @__PURE__ */ React.createElement("div", { className: "text-3xl mb-1" }, "📅"), /* @__PURE__ */ React.createElement("h2", { className: "text-lg font-bold text-gray-800 leading-snug" }, "シフト自動作成アプリ", /* @__PURE__ */ React.createElement("br", null), /* @__PURE__ */ React.createElement("span", { className: "text-sm font-normal text-gray-500" }, "介護老人保健施設の現場で自作したツールです")), /* @__PURE__ */ React.createElement("ul", { className: "mt-3 space-y-1.5 text-sm text-gray-700" }, /* @__PURE__ */ React.createElement("li", null, "✅ 夜勤・日勤・早番・遅番を、ルールに沿って自動で配置"), /* @__PURE__ */ React.createElement("li", null, "✅ 連勤や夜勤明けの勤務など、負担の大きい配置を自動でチェック"), /* @__PURE__ */ React.createElement("li", null, "✅ 自動作成のあとに、人が1マスずつ確認・修正できる"), /* @__PURE__ */ React.createElement("li", null, "🔐 データはこの端末の中だけに保存（外部に送信しません）")), /* @__PURE__ */ React.createElement("button", { onClick: tryDemo, className: "mt-4 w-full h-12 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 text-white font-bold text-base shadow active:scale-[0.98] transition-transform" }, "▶ サンプルで自動作成を試す"), /* @__PURE__ */ React.createElement("p", { className: "text-[11px] text-gray-400 mt-1.5 text-center" }, "架空の職員", DEMO_STAFF_DATA.length, "名・1か月分のシフトを、約3秒で作成します"), /* @__PURE__ */ React.createElement("div", { className: "mt-2 grid grid-cols-2 gap-2" }, /* @__PURE__ */ React.createElement("a", { href: "manual.html", target: "_blank", rel: "noopener", className: "h-10 rounded-xl border border-amber-300 bg-amber-50 text-amber-800 text-sm font-bold flex items-center justify-center" }, "📖 取扱説明書"), /* @__PURE__ */ React.createElement("button", { onClick: closeWelcome, className: "h-10 rounded-xl border border-gray-200 text-gray-600 text-sm font-bold" }, "自分で設定する"), /* @__PURE__ */ React.createElement("button", { onClick: () => setIsContactOpen(true), className: "col-span-2 h-10 rounded-xl border border-gray-200 text-gray-600 text-sm font-bold" }, "✉️ 問い合わせ先"))));
-  const renderMobile = () => /* @__PURE__ */ React.createElement("div", { className: "flex flex-col flex-1 min-h-0 bg-slate-100" }, /* @__PURE__ */ React.createElement("header", { className: "bg-slate-800 text-white px-2 h-12 flex items-center gap-1 shrink-0 z-30" }, /* @__PURE__ */ React.createElement("span", { className: "text-lg" }, "📅"), /* @__PURE__ */ React.createElement("h1", { className: "font-bold text-sm" }, "シフト作成"), /* @__PURE__ */ React.createElement("a", { href: "manual.html#mobile", target: "_blank", rel: "noopener", className: "ml-1 mr-auto text-[11px] bg-amber-400 text-slate-900 font-bold px-2 py-1 rounded whitespace-nowrap" }, "📖 使い方"), /* @__PURE__ */ React.createElement("button", { onClick: () => setMonth((m) => m - 1), className: "w-9 h-9 text-slate-300", "aria-label": "前の月" }, "◀"), /* @__PURE__ */ React.createElement("span", { className: "font-bold text-base w-24 text-center" }, year, "年", month, "月"), /* @__PURE__ */ React.createElement("button", { onClick: () => setMonth((m) => m + 1), className: "w-9 h-9 text-slate-300", "aria-label": "次の月" }, "▶")), /* @__PURE__ */ React.createElement("div", { className: "bg-white border-b shrink-0 z-20" }, /* @__PURE__ */ React.createElement("div", { className: "flex px-2 pt-2 gap-1" }, ["設定", "確保", "夜勤", "日勤", "早遅", "均し"].map((label, i) => /* @__PURE__ */ React.createElement("div", { key: i, className: `flex-1 text-center text-[10px] py-1 rounded-full whitespace-nowrap ${step === i ? "bg-blue-600 text-white font-bold" : step > i ? "bg-green-100 text-green-700" : "bg-gray-100 text-gray-400"}` }, i, ".", label))), renderStepActions(), /* @__PURE__ */ React.createElement("div", { className: `mx-3 mb-2 px-2.5 py-1.5 rounded-lg text-xs leading-snug ${message.type === "error" ? "bg-red-50 text-red-700 border border-red-200" : message.type === "success" ? "bg-green-50 text-green-700 border border-green-200" : "bg-blue-50 text-blue-700 border border-blue-200"}` }, message.text), nightViolations && nightViolations.hardFail && /* @__PURE__ */ React.createElement("div", { className: "mx-3 mb-2 px-2.5 py-1.5 rounded-lg bg-red-50 border border-red-400 text-red-800 text-xs flex justify-between gap-2" }, /* @__PURE__ */ React.createElement("span", null, "⛔ 夜勤人数を充足できません（不足 ", nightViolations.unfilled, " 枠）。職員数や公休・ロックを見直してください。"), /* @__PURE__ */ React.createElement("button", { onClick: () => setNightViolations(null), className: "font-bold px-1" }, "✕")), nightViolations && !nightViolations.hardFail && nightViolations.targetMismatches && nightViolations.targetMismatches.length > 0 && /* @__PURE__ */ React.createElement("div", { className: "mx-3 mb-2 px-2.5 py-1.5 rounded-lg bg-orange-50 border border-orange-300 text-orange-800 text-xs flex justify-between gap-2" }, /* @__PURE__ */ React.createElement("span", null, "⚠️ 夜勤回数の目標未達：", nightViolations.targetMismatches.map((m) => `${m.name}(${m.target}→${m.actual})`).join("、")), /* @__PURE__ */ React.createElement("button", { onClick: () => setNightViolations(null), className: "font-bold px-1" }, "✕"))), /* @__PURE__ */ React.createElement("main", { className: "flex-1 overflow-y-auto" }, mView === "staff" && renderMobileStaffView(), mView === "day" && renderMobileDayView(), mView === "grid" && renderMobileGridView(), /* @__PURE__ */ React.createElement("div", { className: "h-4" })), /* @__PURE__ */ React.createElement("nav", { className: "bg-white border-t grid grid-cols-4 shrink-0 z-30 pb-[env(safe-area-inset-bottom)]" }, [
+  const renderMobile = () => /* @__PURE__ */ React.createElement("div", { className: "flex flex-col flex-1 min-h-0 bg-slate-100" }, /* @__PURE__ */ React.createElement("header", { className: "bg-slate-800 text-white px-2 h-12 flex items-center gap-1 shrink-0 z-30" }, /* @__PURE__ */ React.createElement("span", { className: "text-lg" }, "📅"), /* @__PURE__ */ React.createElement("h1", { className: "font-bold text-sm" }, "シフト作成"), /* @__PURE__ */ React.createElement("a", { href: "manual.html#mobile", target: "_blank", rel: "noopener", className: "ml-1 mr-auto text-[11px] bg-amber-400 text-slate-900 font-bold px-2 py-1 rounded whitespace-nowrap" }, "📖 使い方"), /* @__PURE__ */ React.createElement("button", { onClick: () => setMonth((m) => m - 1), className: "w-9 h-9 text-slate-300", "aria-label": "前の月" }, "◀"), /* @__PURE__ */ React.createElement("span", { className: "font-bold text-base w-24 text-center" }, year, "年", month, "月"), /* @__PURE__ */ React.createElement("button", { onClick: () => setMonth((m) => m + 1), className: "w-9 h-9 text-slate-300", "aria-label": "次の月" }, "▶")), multiUnit && renderUnitTabs(), /* @__PURE__ */ React.createElement("div", { className: "bg-white border-b shrink-0 z-20" }, /* @__PURE__ */ React.createElement("div", { className: "flex px-2 pt-2 gap-1" }, ["設定", "確保", "夜勤", "日勤", "早遅", "均し"].map((label, i) => /* @__PURE__ */ React.createElement("div", { key: i, className: `flex-1 text-center text-[10px] py-1 rounded-full whitespace-nowrap ${step === i ? "bg-blue-600 text-white font-bold" : step > i ? "bg-green-100 text-green-700" : "bg-gray-100 text-gray-400"}` }, i, ".", label))), renderStepActions(), /* @__PURE__ */ React.createElement("div", { className: `mx-3 mb-2 px-2.5 py-1.5 rounded-lg text-xs leading-snug ${message.type === "error" ? "bg-red-50 text-red-700 border border-red-200" : message.type === "success" ? "bg-green-50 text-green-700 border border-green-200" : "bg-blue-50 text-blue-700 border border-blue-200"}` }, message.text), nightViolations && nightViolations.hardFail && /* @__PURE__ */ React.createElement("div", { className: "mx-3 mb-2 px-2.5 py-1.5 rounded-lg bg-red-50 border border-red-400 text-red-800 text-xs flex justify-between gap-2" }, /* @__PURE__ */ React.createElement("span", null, "⛔ 夜勤人数を充足できません（不足 ", nightViolations.unfilled, " 枠）。職員数や公休・ロックを見直してください。"), /* @__PURE__ */ React.createElement("button", { onClick: () => setNightViolations(null), className: "font-bold px-1" }, "✕")), nightViolations && !nightViolations.hardFail && nightViolations.targetMismatches && nightViolations.targetMismatches.length > 0 && /* @__PURE__ */ React.createElement("div", { className: "mx-3 mb-2 px-2.5 py-1.5 rounded-lg bg-orange-50 border border-orange-300 text-orange-800 text-xs flex justify-between gap-2" }, /* @__PURE__ */ React.createElement("span", null, "⚠️ 夜勤回数の目標未達：", nightViolations.targetMismatches.map((m) => `${m.name}(${m.target}→${m.actual})`).join("、")), /* @__PURE__ */ React.createElement("button", { onClick: () => setNightViolations(null), className: "font-bold px-1" }, "✕"))), /* @__PURE__ */ React.createElement("main", { className: "flex-1 overflow-y-auto" }, mView === "staff" && renderMobileStaffView(), mView === "day" && renderMobileDayView(), mView === "grid" && renderMobileGridView(), /* @__PURE__ */ React.createElement("div", { className: "h-4" })), /* @__PURE__ */ React.createElement("nav", { className: "bg-white border-t grid grid-cols-4 shrink-0 z-30 pb-[env(safe-area-inset-bottom)]" }, [
     { key: "staff", icon: "👤", label: "職員別" },
     { key: "day", icon: "📆", label: "日別" },
     { key: "grid", icon: "🗓️", label: "一覧" }
@@ -3942,10 +4753,10 @@ function App() {
     setStep(5);
     setMessage({ text: "Step5: 早番・遅番の配置を再実行（均し）します。", type: "info" });
   }, className: "flex items-center gap-1 px-3 py-1.5 sm:px-4 sm:py-2 bg-blue-600 text-white rounded hover:bg-blue-700 shadow-sm font-bold whitespace-nowrap text-xs sm:text-sm" }, "次へ ▶")), step === 5 && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("button", { onClick: () => distributeEarlyLate(true), className: "flex items-center gap-1 px-2 py-1.5 sm:px-3 sm:py-2 bg-indigo-600 text-white rounded hover:bg-indigo-700 shadow-sm font-bold whitespace-nowrap text-xs sm:text-sm" }, "🔄 再早遅"))), /* @__PURE__ */ React.createElement("div", { className: "flex gap-1.5 sm:gap-2 items-center flex-nowrap shrink-0 ml-auto justify-end sm:flex-wrap sm:shrink sm:min-w-0" }, /* @__PURE__ */ React.createElement("button", { onClick: handleLockAll, className: "flex items-center gap-1 px-2 py-1.5 sm:px-3 sm:py-2 bg-slate-600 text-white rounded hover:bg-slate-700 shadow-sm font-bold whitespace-nowrap text-xs sm:text-sm", title: "入力済みのシフトをすべてロック" }, "🔒 ", /* @__PURE__ */ React.createElement("span", { className: "hidden sm:inline" }, "一括ロック")), /* @__PURE__ */ React.createElement("button", { onClick: handleUnlockAll, className: "flex items-center gap-1 px-2 py-1.5 sm:px-3 sm:py-2 bg-slate-200 text-slate-700 rounded hover:bg-slate-300 shadow-sm font-bold whitespace-nowrap text-xs sm:text-sm", title: "すべてのロックを解除" }, "🔓 ", /* @__PURE__ */ React.createElement("span", { className: "hidden sm:inline" }, "全解除")), /* @__PURE__ */ React.createElement("button", { onClick: downloadCSV, className: "flex items-center gap-1 px-2 py-1.5 sm:px-3 sm:py-2 bg-gray-800 text-white rounded hover:bg-gray-900 shadow-sm font-bold whitespace-nowrap text-xs sm:text-sm" }, "💾 ", /* @__PURE__ */ React.createElement("span", { className: "hidden sm:inline" }, "CSV")), /* @__PURE__ */ React.createElement("button", { onClick: undo, disabled: history.length === 0, className: `px-2 py-1.5 sm:px-3 sm:py-2 border rounded font-bold transition-colors text-xs sm:text-sm ${history.length === 0 ? "bg-gray-100 text-gray-400 border-transparent cursor-not-allowed" : "bg-white text-gray-700 border-gray-300 hover:bg-gray-50 shadow-sm"}` }, "↩️ 戻る"), step > 0 && /* @__PURE__ */ React.createElement("button", { onClick: () => setStep(step - 1), className: "px-2 py-1.5 sm:px-3 sm:py-2 bg-white border border-gray-300 text-gray-500 rounded hover:bg-gray-50 font-bold shadow-sm text-xs sm:text-sm" }, "◀"), /* @__PURE__ */ React.createElement("button", { onClick: () => {
-    if (confirm("リセットしますか？")) {
-      initializeSchedule();
+    if (confirm(multiUnit ? `${unitName(activeUnit)}のシフトを空にしますか？（他のユニットはそのままです）` : "リセットしますか？")) {
+      initializeSchedule("unit");
     }
-  }, className: "px-2 py-1.5 sm:px-3 sm:py-2 text-gray-400 hover:text-red-500 border border-transparent hover:border-red-200 rounded text-base sm:text-lg" }, "🗑️")))), /* @__PURE__ */ React.createElement("div", { className: "flex px-1 sm:px-2 pb-1.5 sm:pb-2 gap-1 overflow-x-auto sm:justify-center bg-gray-50 border-b hide-scrollbar" }, ["設定", "確保", "夜勤", "日勤", "早遅", "早遅均"].map((label, i) => /* @__PURE__ */ React.createElement("div", { key: i, className: `flex-1 sm:flex-none text-center text-[9px] sm:text-xs py-1 px-1.5 sm:px-3 rounded-full whitespace-nowrap ${step === i ? "bg-blue-600 text-white font-bold" : step > i ? "bg-green-100 text-green-700" : "bg-gray-200 text-gray-400"}` }, i, ". ", label)))), /* @__PURE__ */ React.createElement("div", { className: "flex-1 overflow-auto bg-white relative" }, /* @__PURE__ */ React.createElement("table", { className: "w-full border-collapse text-xs sm:text-sm" }, /* @__PURE__ */ React.createElement("thead", { className: "sticky top-0 z-20 shadow-sm bg-slate-50" }, /* @__PURE__ */ React.createElement("tr", null, /* @__PURE__ */ React.createElement("th", { className: "border p-1 sm:p-2 bg-slate-100 min-w-[64px] sm:min-w-[80px] sticky left-0 z-30 text-left" }, "氏名"), /* @__PURE__ */ React.createElement("th", { className: "border p-1 bg-slate-100 w-6 sm:w-8 text-[9px] sm:text-[10px]" }, "夜"), /* @__PURE__ */ React.createElement("th", { className: "border p-1 bg-slate-100 w-6 sm:w-8 text-[9px] sm:text-[10px]" }, "休"), /* @__PURE__ */ React.createElement("th", { className: "border p-1 bg-slate-100 w-6 sm:w-8 text-[9px] sm:text-[10px]" }, "早"), /* @__PURE__ */ React.createElement("th", { className: "border p-1 bg-slate-100 w-6 sm:w-8 text-[9px] sm:text-[10px]" }, "日"), /* @__PURE__ */ React.createElement("th", { className: "border p-1 bg-slate-100 w-6 sm:w-8 text-[9px] sm:text-[10px]" }, "遅"), calendar.map((c) => /* @__PURE__ */ React.createElement("th", { key: c.date, className: `border min-w-[28px] sm:min-w-[32px] h-10 ${c.day === 0 ? "bg-red-50 text-red-600" : c.day === 6 ? "bg-blue-50 text-blue-600" : "bg-white"}` }, /* @__PURE__ */ React.createElement("div", { className: "flex flex-col items-center justify-center" }, /* @__PURE__ */ React.createElement("span", { className: "font-bold text-xs sm:text-sm" }, c.date), /* @__PURE__ */ React.createElement("span", { className: "text-[8px] sm:text-[9px] opacity-70" }, WEEKDAYS[c.day])))))), /* @__PURE__ */ React.createElement("tbody", null, staffData.map((staff, index) => {
+  }, className: "px-2 py-1.5 sm:px-3 sm:py-2 text-gray-400 hover:text-red-500 border border-transparent hover:border-red-200 rounded text-base sm:text-lg" }, "🗑️")))), /* @__PURE__ */ React.createElement("div", { className: "flex px-1 sm:px-2 pb-1.5 sm:pb-2 gap-1 overflow-x-auto sm:justify-center bg-gray-50 border-b hide-scrollbar" }, ["設定", "確保", "夜勤", "日勤", "早遅", "早遅均"].map((label, i) => /* @__PURE__ */ React.createElement("div", { key: i, className: `flex-1 sm:flex-none text-center text-[9px] sm:text-xs py-1 px-1.5 sm:px-3 rounded-full whitespace-nowrap ${step === i ? "bg-blue-600 text-white font-bold" : step > i ? "bg-green-100 text-green-700" : "bg-gray-200 text-gray-400"}` }, i, ". ", label)))), multiUnit && renderUnitTabs(), /* @__PURE__ */ React.createElement("div", { className: "flex-1 overflow-auto bg-white relative" }, /* @__PURE__ */ React.createElement("table", { className: "w-full border-collapse text-xs sm:text-sm" }, /* @__PURE__ */ React.createElement("thead", { className: "sticky top-0 z-20 shadow-sm bg-slate-50" }, /* @__PURE__ */ React.createElement("tr", null, /* @__PURE__ */ React.createElement("th", { className: "border p-1 sm:p-2 bg-slate-100 min-w-[64px] sm:min-w-[80px] sticky left-0 z-30 text-left" }, "氏名"), /* @__PURE__ */ React.createElement("th", { className: "border p-1 bg-slate-100 w-6 sm:w-8 text-[9px] sm:text-[10px]" }, "夜"), /* @__PURE__ */ React.createElement("th", { className: "border p-1 bg-slate-100 w-6 sm:w-8 text-[9px] sm:text-[10px]" }, "休"), /* @__PURE__ */ React.createElement("th", { className: "border p-1 bg-slate-100 w-6 sm:w-8 text-[9px] sm:text-[10px]" }, "早"), /* @__PURE__ */ React.createElement("th", { className: "border p-1 bg-slate-100 w-6 sm:w-8 text-[9px] sm:text-[10px]" }, "日"), /* @__PURE__ */ React.createElement("th", { className: "border p-1 bg-slate-100 w-6 sm:w-8 text-[9px] sm:text-[10px]" }, "遅"), calendar.map((c) => /* @__PURE__ */ React.createElement("th", { key: c.date, className: `border min-w-[28px] sm:min-w-[32px] h-10 ${c.day === 0 ? "bg-red-50 text-red-600" : c.day === 6 ? "bg-blue-50 text-blue-600" : "bg-white"}` }, /* @__PURE__ */ React.createElement("div", { className: "flex flex-col items-center justify-center" }, /* @__PURE__ */ React.createElement("span", { className: "font-bold text-xs sm:text-sm" }, c.date), /* @__PURE__ */ React.createElement("span", { className: "text-[8px] sm:text-[9px] opacity-70" }, WEEKDAYS[c.day])))))), /* @__PURE__ */ React.createElement("tbody", null, staffData.map((staff, index) => {
     const counts = calculateCounts(staff.id);
     const target = nightTargets[staff.id];
     const hasTarget = typeof target === "number";
@@ -3953,12 +4764,11 @@ function App() {
     const isTargetMismatch = hasTarget && counts.night !== target;
     const targetOffDays = getTargetOffDays(staff);
     const isOffOk = counts.off === targetOffDays;
-    return /* @__PURE__ */ React.createElement(
+    return /* @__PURE__ */ React.createElement(React.Fragment, { key: staff.id }, staff._guest && index === homeStaff.length && /* @__PURE__ */ React.createElement("tr", { className: "bg-orange-50" }, /* @__PURE__ */ React.createElement("td", { colSpan: 6 + calendar.length, className: "border px-2 py-1 text-[10px] sm:text-xs font-bold text-orange-700" }, "🤝 ほかのユニットから応援に入る職員（応援の日だけ表示。自動作成では動かしません）")), /* @__PURE__ */ React.createElement(
       "tr",
       {
-        key: staff.id,
-        className: `transition-colors cursor-move ${draggedIndex === index ? "opacity-30 bg-gray-200" : "hover:bg-slate-50"} ${dragOverIndex === index && draggedIndex !== index ? "border-t-2 border-blue-500 bg-blue-50" : ""}`,
-        draggable: true,
+        className: `transition-colors ${staff._guest ? "bg-orange-50/40" : "cursor-move"} ${draggedIndex === index ? "opacity-30 bg-gray-200" : "hover:bg-slate-50"} ${dragOverIndex === index && draggedIndex !== index ? "border-t-2 border-blue-500 bg-blue-50" : ""}`,
+        draggable: !staff._guest,
         onDragStart: (e) => handleDragStart(e, index),
         onDragOver: (e) => e.preventDefault(),
         onDragEnter: (e) => handleDragEnter(e, index),
@@ -3971,7 +4781,7 @@ function App() {
       }, disabled: index === 0, className: "hover:text-gray-700 disabled:opacity-20 p-0.5", title: "上へ" }, "▲"), /* @__PURE__ */ React.createElement("button", { onClick: (e) => {
         e.stopPropagation();
         moveStaff(index, 1);
-      }, disabled: index === staffData.length - 1, className: "hover:text-gray-700 disabled:opacity-20 p-0.5", title: "下へ" }, "▼")), /* @__PURE__ */ React.createElement("div", { className: "hidden sm:flex text-gray-300 hover:text-gray-500 mr-1 cursor-move", title: "ドラッグで並び替え" }, "⋮⋮"), ["A", "D"].includes(staff.group) && /* @__PURE__ */ React.createElement(
+      }, disabled: index === staffData.length - 1, className: "hover:text-gray-700 disabled:opacity-20 p-0.5", title: "下へ" }, "▼")), /* @__PURE__ */ React.createElement("div", { className: "hidden sm:flex text-gray-300 hover:text-gray-500 mr-1 cursor-move", title: "ドラッグで並び替え" }, "⋮⋮"), !staff._guest && ["A", "D"].includes(staff.group) && /* @__PURE__ */ React.createElement(
         "button",
         {
           onClick: (e) => {
@@ -3982,36 +4792,39 @@ function App() {
           title: "この職員の夜勤を優先的に自動配置"
         },
         "🌙先"
-      ), /* @__PURE__ */ React.createElement("div", { className: "flex flex-col overflow-hidden" }, /* @__PURE__ */ React.createElement("span", { className: "text-gray-800 text-[10px] sm:text-sm truncate" }, staff.name), /* @__PURE__ */ React.createElement("span", { className: `text-[8px] sm:text-[9px] inline-block px-1 rounded w-fit ${["A", "D"].includes(staff.group) ? "bg-indigo-100 text-indigo-700" : "bg-teal-100 text-teal-700"}` }, staff.role, " ", hasTarget ? `(目標${target})` : "")))),
-      /* @__PURE__ */ React.createElement("td", { className: `border text-center font-mono text-[10px] sm:text-xs ${["A", "D"].includes(staff.group) && (isNightWarn || isTargetMismatch) ? "text-red-600 font-bold bg-red-50" : "text-gray-500"}` }, ["A", "D"].includes(staff.group) ? counts.night : "-"),
-      /* @__PURE__ */ React.createElement("td", { className: `border text-center font-mono text-[10px] sm:text-xs ${!isOffOk ? "text-orange-600 font-bold bg-orange-50" : "text-green-600"}` }, /* @__PURE__ */ React.createElement("div", { className: "flex flex-col items-center justify-center" }, /* @__PURE__ */ React.createElement("span", null, counts.off), (isFullyWeekdayFixed(staff) || staff.isCustomTime && staff.customOffDays !== "" && staff.customOffDays !== void 0) && /* @__PURE__ */ React.createElement("span", { className: "text-[8px] text-gray-400 leading-none mt-[1px]" }, "/", targetOffDays))),
-      /* @__PURE__ */ React.createElement("td", { className: "border text-center font-mono text-[10px] sm:text-xs text-yellow-600" }, counts.early > 0 ? counts.early : "-"),
-      /* @__PURE__ */ React.createElement("td", { className: "border text-center font-mono text-[10px] sm:text-xs text-blue-600" }, counts.day > 0 ? counts.day : "-"),
-      /* @__PURE__ */ React.createElement("td", { className: "border text-center font-mono text-[10px] sm:text-xs text-purple-600" }, counts.late > 0 ? counts.late : "-"),
+      ), /* @__PURE__ */ React.createElement("div", { className: "flex flex-col overflow-hidden" }, /* @__PURE__ */ React.createElement("span", { className: "text-gray-800 text-[10px] sm:text-sm truncate" }, staff.name), /* @__PURE__ */ React.createElement("span", { className: `text-[8px] sm:text-[9px] inline-block px-1 rounded w-fit ${staff._guest ? "bg-orange-100 text-orange-700" : ["A", "D"].includes(staff.group) ? "bg-indigo-100 text-indigo-700" : "bg-teal-100 text-teal-700"}` }, staff._guest ? `${unitName(unitOfStaff(staff))}から` : /* @__PURE__ */ React.createElement(React.Fragment, null, staff.role, " ", hasTarget ? `(目標${target})` : ""))))),
+      staff._guest ? /* @__PURE__ */ React.createElement("td", { colSpan: 5, className: "border text-center text-[9px] sm:text-[10px] text-orange-700 bg-orange-50" }, "応援") : /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("td", { className: `border text-center font-mono text-[10px] sm:text-xs ${["A", "D"].includes(staff.group) && (isNightWarn || isTargetMismatch) ? "text-red-600 font-bold bg-red-50" : "text-gray-500"}` }, ["A", "D"].includes(staff.group) ? counts.night : "-"), /* @__PURE__ */ React.createElement("td", { className: `border text-center font-mono text-[10px] sm:text-xs ${!isOffOk ? "text-orange-600 font-bold bg-orange-50" : "text-green-600"}` }, /* @__PURE__ */ React.createElement("div", { className: "flex flex-col items-center justify-center" }, /* @__PURE__ */ React.createElement("span", null, counts.off), (isFullyWeekdayFixed(staff) || staff.isCustomTime && staff.customOffDays !== "" && staff.customOffDays !== void 0) && /* @__PURE__ */ React.createElement("span", { className: "text-[8px] text-gray-400 leading-none mt-[1px]" }, "/", targetOffDays))), /* @__PURE__ */ React.createElement("td", { className: "border text-center font-mono text-[10px] sm:text-xs text-yellow-600" }, counts.early > 0 ? counts.early : "-"), /* @__PURE__ */ React.createElement("td", { className: "border text-center font-mono text-[10px] sm:text-xs text-blue-600" }, counts.day > 0 ? counts.day : "-"), /* @__PURE__ */ React.createElement("td", { className: "border text-center font-mono text-[10px] sm:text-xs text-purple-600" }, counts.late > 0 ? counts.late : "-")),
       calendar.map((c) => {
-        var _a2, _b, _c;
+        var _a2, _b, _c, _d, _e;
         const shift = ((_a2 = schedule[staff.id]) == null ? void 0 : _a2[c.date]) || "";
-        const rule = (_b = shiftRules[staff.id]) == null ? void 0 : _b[c.date];
-        const isLocked = (_c = lockedCells[staff.id]) == null ? void 0 : _c[c.date];
+        if (shift === AWAY_SHIFT && staff._guest) {
+          return /* @__PURE__ */ React.createElement("td", { key: c.date, className: "border p-0 bg-slate-100", title: "この日は所属ユニットで勤務" });
+        }
+        const isAway = shift === AWAY_SHIFT;
+        const shownShift = isAway ? ((_b = fullSchedule[staff.id]) == null ? void 0 : _b[c.date]) || "" : shift;
+        const helpTo = isAway ? ((_c = helpAssign[staff.id]) == null ? void 0 : _c[c.date]) || "" : "";
+        const rule = (_d = shiftRules[staff.id]) == null ? void 0 : _d[c.date];
+        const isLocked = (_e = lockedCells[staff.id]) == null ? void 0 : _e[c.date];
         const isReq = (rule == null ? void 0 : rule.requested) && shift === rule.requested;
         const hasNgs = (rule == null ? void 0 : rule.ngs) && rule.ngs.length > 0;
         const wdFix = getWeekdayFix(staff.id, c.date);
-        const isWeekdayFixed = !isLocked && !isReq && !!wdFix && shift === (wdFix === "off" ? SHIFT_TYPES.OFF : SHIFT_TYPES.DAY);
-        const isConsecutiveWarn = getConsecutiveAlert(staff.id, c.date);
-        const isNightDenseWarn = getNightDenseAlert(staff.id, c.date);
-        const isNightEndDayWarn = getNightEndDayAlert(staff.id, c.date);
+        const isWeekdayFixed = !staff._guest && !isAway && !isLocked && !isReq && !!wdFix && shift === (wdFix === "off" ? SHIFT_TYPES.OFF : SHIFT_TYPES.DAY);
+        const skipWarn = staff._guest || isAway;
+        const isConsecutiveWarn = !skipWarn && getConsecutiveAlert(staff.id, c.date);
+        const isNightDenseWarn = !skipWarn && getNightDenseAlert(staff.id, c.date);
+        const isNightEndDayWarn = !skipWarn && getNightEndDayAlert(staff.id, c.date);
         const isWarn = isConsecutiveWarn || isNightDenseWarn || isNightEndDayWarn;
         return /* @__PURE__ */ React.createElement(
           "td",
           {
             key: c.date,
-            className: `border p-0 text-center select-none transition-transform relative ${getCellColor(shift, c)} ${isLocked || isReq ? "" : "cursor-pointer active:scale-95"}`,
+            className: `border p-0 text-center select-none transition-transform relative ${isAway ? "bg-slate-200 text-slate-700 border-slate-300 font-medium" : getCellColor(shift, c)} ${isLocked || isReq ? "" : "cursor-pointer active:scale-95"}`,
             style: isWarn ? { boxShadow: "inset 0 0 0 3px red", zIndex: 1 } : {},
             onClick: () => {
               setSelectingShift({ staffId: staff.id, day: c.date });
             }
           },
-          /* @__PURE__ */ React.createElement("div", { className: "w-full h-10 sm:h-9 flex items-center justify-center relative text-[11px] sm:text-sm" }, shift, /* @__PURE__ */ React.createElement("div", { className: "absolute top-0 left-0 p-0.5 z-10 pointer-events-none" }, isReq && /* @__PURE__ */ React.createElement("span", { className: "bg-blue-500 text-white text-[7px] sm:text-[8px] px-0.5 rounded shadow-sm font-bold" }, "希")), /* @__PURE__ */ React.createElement("div", { className: "absolute top-0 right-0 p-0.5 z-10 flex flex-col items-end" }, isLocked && /* @__PURE__ */ React.createElement(
+          /* @__PURE__ */ React.createElement("div", { className: "w-full h-10 sm:h-9 flex items-center justify-center relative text-[11px] sm:text-sm" }, isAway ? shownShift : shift, /* @__PURE__ */ React.createElement("div", { className: "absolute top-0 left-0 p-0.5 z-10 pointer-events-none" }, isReq && /* @__PURE__ */ React.createElement("span", { className: "bg-blue-500 text-white text-[7px] sm:text-[8px] px-0.5 rounded shadow-sm font-bold" }, "希"), isAway && /* @__PURE__ */ React.createElement("span", { className: "bg-slate-600 text-white text-[7px] sm:text-[8px] px-0.5 rounded shadow-sm font-bold", title: `${unitName(helpTo)}へ応援` }, "→", unitShort(helpTo)), staff._guest && /* @__PURE__ */ React.createElement("span", { className: "bg-orange-500 text-white text-[7px] sm:text-[8px] px-0.5 rounded shadow-sm font-bold", title: `${unitName(unitOfStaff(staff))}から応援` }, "応")), /* @__PURE__ */ React.createElement("div", { className: "absolute top-0 right-0 p-0.5 z-10 flex flex-col items-end" }, isLocked && /* @__PURE__ */ React.createElement(
             "span",
             {
               className: "text-red-600 text-[9px] sm:text-[10px] drop-shadow-md cursor-pointer leading-none",
@@ -4029,7 +4842,7 @@ function App() {
               title: "曜日固定（職員設定で変更できます）。自動作成では動きません"
             },
             "固"
-          ), !isLocked && !isWeekdayFixed && shift && /* @__PURE__ */ React.createElement(
+          ), !isLocked && !isWeekdayFixed && shift && !isAway && !staff._guest && /* @__PURE__ */ React.createElement(
             "span",
             {
               className: "text-gray-500 text-[9px] sm:text-[10px] opacity-20 hover:opacity-100 cursor-pointer leading-none",
@@ -4043,7 +4856,7 @@ function App() {
           )), /* @__PURE__ */ React.createElement("div", { className: "absolute bottom-0 right-0 p-0.5 z-10 pointer-events-none flex flex-col items-end gap-0.5" }, hasNgs && /* @__PURE__ */ React.createElement("span", { className: "bg-red-500 text-white text-[7px] sm:text-[8px] px-0.5 rounded shadow-sm font-bold" }, "NG")))
         );
       })
-    );
+    ));
   }), /* @__PURE__ */ React.createElement("tr", { className: "bg-slate-100 border-t-2 border-slate-300" }, /* @__PURE__ */ React.createElement("td", { className: "border p-1 sm:p-2 sticky left-0 z-10 bg-slate-100 text-right text-[10px] sm:text-xs font-bold text-slate-600" }, "夜勤 (", nightShiftCount, ")"), /* @__PURE__ */ React.createElement("td", { colSpan: 5, className: "border bg-slate-200" }), calendar.map((c) => {
     const cnt = staffData.filter((s) => {
       var _a2;
@@ -4142,10 +4955,10 @@ function App() {
         }
       ), /* @__PURE__ */ React.createElement("div", { className: "absolute bottom-full mb-2 hidden group-hover:block bg-black text-white text-[10px] px-2 py-1 rounded whitespace-nowrap z-20" }, i, ":00〜", i + 1, ":00 (", count, "人)"));
     }))), /* @__PURE__ */ React.createElement("div", { className: "mt-4 flex justify-end shrink-0" }, /* @__PURE__ */ React.createElement("button", { onClick: () => setSelectedTimelineDay(null), className: "bg-slate-600 text-white px-4 py-2 rounded font-bold text-sm" }, "閉じる"))));
-  })(), selectingShift && /* @__PURE__ */ React.createElement("div", { className: "fixed inset-0 bg-black bg-opacity-30 flex flex-col items-center justify-center z-[100]", onClick: () => setSelectingShift(null) }, /* @__PURE__ */ React.createElement("div", { className: "bg-white rounded-lg p-4 shadow-xl max-w-[360px] w-11/12", onClick: (e) => e.stopPropagation() }, /* @__PURE__ */ React.createElement("div", { className: "flex justify-between items-center mb-3 border-b pb-2" }, /* @__PURE__ */ React.createElement("h3", { className: "font-bold text-gray-700 text-sm sm:text-base" }, (_a = staffData.find((s) => s.id === selectingShift.staffId)) == null ? void 0 : _a.name, "(", selectingShift.day, "日) の設定"), /* @__PURE__ */ React.createElement("button", { onClick: () => setSelectingShift(null), className: "text-gray-400 hover:text-gray-600 font-bold text-xl leading-none" }, "×")), /* @__PURE__ */ React.createElement("div", { className: "mb-4" }, /* @__PURE__ */ React.createElement("h4", { className: "text-xs font-bold text-gray-500 mb-2" }, "① シフトの直接入力 (確定)"), /* @__PURE__ */ React.createElement("div", { className: "grid grid-cols-5 gap-1.5" }, SHIFT_ORDER.map((type) => {
+  })(), selectingShift && /* @__PURE__ */ React.createElement("div", { className: "fixed inset-0 bg-black bg-opacity-30 flex flex-col items-center justify-center z-[100]", onClick: () => setSelectingShift(null) }, /* @__PURE__ */ React.createElement("div", { className: "bg-white rounded-lg p-4 shadow-xl max-w-[360px] w-11/12", onClick: (e) => e.stopPropagation() }, /* @__PURE__ */ React.createElement("div", { className: "flex justify-between items-center mb-3 border-b pb-2" }, /* @__PURE__ */ React.createElement("h3", { className: "font-bold text-gray-700 text-sm sm:text-base" }, (_a = allStaffData.find((s) => s.id === selectingShift.staffId)) == null ? void 0 : _a.name, "(", selectingShift.day, "日) の設定"), /* @__PURE__ */ React.createElement("button", { onClick: () => setSelectingShift(null), className: "text-gray-400 hover:text-gray-600 font-bold text-xl leading-none" }, "×")), /* @__PURE__ */ React.createElement("div", { className: "mb-4" }, /* @__PURE__ */ React.createElement("h4", { className: "text-xs font-bold text-gray-500 mb-2" }, "① シフトの直接入力 (確定)"), /* @__PURE__ */ React.createElement("div", { className: "grid grid-cols-5 gap-1.5" }, SHIFT_ORDER.map((type) => {
     var _a2;
     const dayInfo = calendar.find((c) => c.date === selectingShift.day) || { day: 1 };
-    const currentShift = (_a2 = schedule[selectingShift.staffId]) == null ? void 0 : _a2[selectingShift.day];
+    const currentShift = (_a2 = fullSchedule[selectingShift.staffId]) == null ? void 0 : _a2[selectingShift.day];
     return /* @__PURE__ */ React.createElement(
       "button",
       {
@@ -4158,7 +4971,28 @@ function App() {
       },
       type === SHIFT_TYPES.NONE ? "空" : type
     );
-  }))), /* @__PURE__ */ React.createElement("div", { className: "border-t pt-3 mb-4" }, /* @__PURE__ */ React.createElement("h4", { className: "text-xs font-bold text-gray-500 mb-2" }, "② 希望・NG設定 (自動配置用)"), /* @__PURE__ */ React.createElement("div", { className: "space-y-3" }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("label", { className: "block text-xs text-gray-700 mb-1" }, "希望シフト (最優先で割り当て)"), /* @__PURE__ */ React.createElement(
+  }))), multiUnit && (() => {
+    var _a2;
+    const st = allStaffData.find((x) => x.id === selectingShift.staffId);
+    if (!st) return null;
+    const home = unitOfStaff(st);
+    const cur = ((_a2 = helpAssign[st.id]) == null ? void 0 : _a2[selectingShift.day]) || "";
+    const options = units.filter((u) => u.id !== home && ((st.helpUnits || []).includes(u.id) || u.id === cur));
+    if (options.length === 0) return null;
+    const choices = [{ id: "", label: `${unitName(home)}（所属）` }, ...options.map((u) => ({ id: u.id, label: `${u.name}へ応援` }))];
+    return /* @__PURE__ */ React.createElement("div", { className: "border-t pt-3 mb-4" }, /* @__PURE__ */ React.createElement("h4", { className: "text-xs font-bold text-gray-500 mb-2" }, "🤝 この日に働くユニット"), /* @__PURE__ */ React.createElement("div", { className: "flex flex-wrap gap-1.5" }, choices.map((o) => /* @__PURE__ */ React.createElement(
+      "button",
+      {
+        key: o.id || "home",
+        onClick: () => {
+          setHelpFor(st.id, selectingShift.day, o.id);
+          setSelectingShift(null);
+        },
+        className: `px-2 py-1 rounded border text-xs font-bold ${cur === o.id ? "bg-orange-500 text-white border-orange-600" : "bg-gray-50 text-gray-700 border-gray-300 hover:bg-gray-100"}`
+      },
+      o.label
+    ))), /* @__PURE__ */ React.createElement("p", { className: "text-[10px] text-gray-500 mt-1 leading-snug" }, "勤務の内容は①で選びます。夜勤（当）を応援にしたときは、翌日の明けは所属ユニットの表に残ります。"));
+  })(), /* @__PURE__ */ React.createElement("div", { className: "border-t pt-3 mb-4" }, /* @__PURE__ */ React.createElement("h4", { className: "text-xs font-bold text-gray-500 mb-2" }, "② 希望・NG設定 (自動配置用)"), /* @__PURE__ */ React.createElement("div", { className: "space-y-3" }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("label", { className: "block text-xs text-gray-700 mb-1" }, "希望シフト (最優先で割り当て)"), /* @__PURE__ */ React.createElement(
     "select",
     {
       value: tempRequested,
@@ -4243,7 +5077,7 @@ function App() {
       value: snapshotWarningThreshold,
       onChange: (e) => setSnapshotWarningThreshold(Math.max(0, parseInt(e.target.value) || 0))
     }
-  ), /* @__PURE__ */ React.createElement("span", { className: "text-sm text-gray-700" }, "人未満で赤色表示")))), /* @__PURE__ */ React.createElement("div", { className: "mt-6 flex justify-end" }, /* @__PURE__ */ React.createElement("button", { onClick: () => setIsShiftTimeModalOpen(false), className: "bg-blue-600 text-white px-4 py-2 rounded font-bold text-sm" }, "完了")))), isDayTargetModalOpen && /* @__PURE__ */ React.createElement("div", { className: "fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50", onClick: () => setIsDayTargetModalOpen(false) }, /* @__PURE__ */ React.createElement("div", { className: "bg-white rounded-lg p-4 w-11/12 max-w-sm shadow-xl max-h-[80dvh] overflow-y-auto", onClick: (e) => e.stopPropagation() }, /* @__PURE__ */ React.createElement("h3", { className: "font-bold text-lg mb-4" }, "🎯 必要人数設定"), /* @__PURE__ */ React.createElement("h4", { className: "font-bold text-sm text-amber-700 mb-1 border-b pb-1" }, "🛁 各曜日の朝ピーク必要数（入浴帯・下限hard）"), /* @__PURE__ */ React.createElement("p", { className: "text-[10px] text-gray-500 mb-2" }, "早番＋日勤＋早日＋日遅の朝在籍。この数より", /* @__PURE__ */ React.createElement("b", null, "2以上少ない"), "日は自動作成で禁止（連直で確保）。遅番は朝に数えません。月木=機械浴・火金=個浴・水=リネン等に合わせて設定。"), /* @__PURE__ */ React.createElement("div", { className: "grid grid-cols-7 gap-1 sm:gap-2 mb-4" }, WEEKDAYS.map((w, i) => /* @__PURE__ */ React.createElement("div", { key: i, className: "flex flex-col items-center" }, /* @__PURE__ */ React.createElement("span", { className: "text-xs sm:text-sm text-gray-600 mb-1" }, w), /* @__PURE__ */ React.createElement(
+  ), /* @__PURE__ */ React.createElement("span", { className: "text-sm text-gray-700" }, "人未満で赤色表示")))), /* @__PURE__ */ React.createElement("div", { className: "mt-6 flex justify-end" }, /* @__PURE__ */ React.createElement("button", { onClick: () => setIsShiftTimeModalOpen(false), className: "bg-blue-600 text-white px-4 py-2 rounded font-bold text-sm" }, "完了")))), isDayTargetModalOpen && /* @__PURE__ */ React.createElement("div", { className: "fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50", onClick: () => setIsDayTargetModalOpen(false) }, /* @__PURE__ */ React.createElement("div", { className: "bg-white rounded-lg p-4 w-11/12 max-w-sm shadow-xl max-h-[80dvh] overflow-y-auto", onClick: (e) => e.stopPropagation() }, /* @__PURE__ */ React.createElement("h3", { className: "font-bold text-lg mb-4" }, "🎯 必要人数設定", multiUnit && /* @__PURE__ */ React.createElement("span", { className: "ml-2 text-sm text-blue-700" }, "（", unitName(activeUnit), "）")), /* @__PURE__ */ React.createElement("h4", { className: "font-bold text-sm text-amber-700 mb-1 border-b pb-1" }, "🛁 各曜日の朝ピーク必要数（入浴帯・下限hard）"), /* @__PURE__ */ React.createElement("p", { className: "text-[10px] text-gray-500 mb-2" }, "早番＋日勤＋早日＋日遅の朝在籍。この数より", /* @__PURE__ */ React.createElement("b", null, "2以上少ない"), "日は自動作成で禁止（連直で確保）。遅番は朝に数えません。月木=機械浴・火金=個浴・水=リネン等に合わせて設定。"), /* @__PURE__ */ React.createElement("div", { className: "grid grid-cols-7 gap-1 sm:gap-2 mb-4" }, WEEKDAYS.map((w, i) => /* @__PURE__ */ React.createElement("div", { key: i, className: "flex flex-col items-center" }, /* @__PURE__ */ React.createElement("span", { className: "text-xs sm:text-sm text-gray-600 mb-1" }, w), /* @__PURE__ */ React.createElement(
     "input",
     {
       type: "number",
@@ -4372,7 +5206,16 @@ function App() {
   ), q))), activeNightQuals.length > 0 && (() => {
     const qualNight = staffData.filter((st) => ["A", "D"].includes(st.group) && isNightQualStaff(st));
     return /* @__PURE__ */ React.createElement("p", { className: `text-[11px] mb-4 p-1.5 rounded ${qualNight.length === 0 ? "bg-red-50 text-red-700" : "bg-blue-50 text-blue-800"}` }, qualNight.length === 0 ? `夜勤ができる職員（グループA・D）に${activeNightQuals.join("・")}がいません。職員設定で職種とグループを確認してください。` : `夜勤ができる${activeNightQuals.join("・")}：${qualNight.length}名（${qualNight.map((st) => st.name).join("、")}）。毎晩1名入るには、この人たちの夜勤の合計が月${daysInMonth}回以上必要です（1人あたり約${Math.ceil(daysInMonth / qualNight.length)}回）。`);
-  })(), activeNightQuals.length === 0 && /* @__PURE__ */ React.createElement("div", { className: "mb-4" }), /* @__PURE__ */ React.createElement("div", { className: "text-xs text-gray-500 mb-4 bg-gray-50 p-2 rounded" }, "※日勤設定は「均し処理」の移動基準や色分けに反映されます。", /* @__PURE__ */ React.createElement("br", null), "※夜勤設定は夜勤の自動配置人数に反映されます。"), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end" }, /* @__PURE__ */ React.createElement("button", { onClick: () => setIsDayTargetModalOpen(false), className: "bg-blue-600 text-white px-4 py-2 rounded font-bold text-sm" }, "閉じる")))), isStaffModalOpen && /* @__PURE__ */ React.createElement("div", { className: "fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50", onClick: () => setIsStaffModalOpen(false) }, /* @__PURE__ */ React.createElement("div", { className: "bg-white rounded-lg p-4 w-11/12 max-w-5xl shadow-xl", onClick: (e) => e.stopPropagation() }, /* @__PURE__ */ React.createElement("h3", { className: "font-bold text-lg mb-4" }, "👥 職員設定"), /* @__PURE__ */ React.createElement("div", { className: "max-h-[50dvh] overflow-auto mb-4 border rounded" }, /* @__PURE__ */ React.createElement("table", { className: "w-full text-sm min-w-[600px]" }, /* @__PURE__ */ React.createElement("thead", { className: "bg-gray-50 sticky top-0 z-10 shadow-sm" }, /* @__PURE__ */ React.createElement("tr", null, /* @__PURE__ */ React.createElement("th", { className: "p-2 text-left min-w-[100px]" }, "名前"), /* @__PURE__ */ React.createElement("th", { className: "p-2 text-left min-w-[110px]" }, "グループ"), /* @__PURE__ */ React.createElement("th", { className: "p-2 text-left min-w-[110px]" }, "職種"), /* @__PURE__ */ React.createElement("th", { className: "p-2 text-center whitespace-nowrap min-w-[80px]" }, "夜勤回数"), /* @__PURE__ */ React.createElement("th", { className: "p-2 text-center whitespace-nowrap min-w-[70px]" }, "ペア禁止"), /* @__PURE__ */ React.createElement("th", { className: "p-2 text-center whitespace-nowrap min-w-[140px]" }, "個別時間(非常勤等)"), /* @__PURE__ */ React.createElement("th", { className: "p-2 w-10" }))), /* @__PURE__ */ React.createElement("tbody", null, staffData.map((s) => {
+  })(), activeNightQuals.length === 0 && /* @__PURE__ */ React.createElement("div", { className: "mb-4" }), /* @__PURE__ */ React.createElement("div", { className: "text-xs text-gray-500 mb-4 bg-gray-50 p-2 rounded" }, "※日勤設定は「均し処理」の移動基準や色分けに反映されます。", /* @__PURE__ */ React.createElement("br", null), "※夜勤設定は夜勤の自動配置人数に反映されます。"), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end" }, /* @__PURE__ */ React.createElement("button", { onClick: () => setIsDayTargetModalOpen(false), className: "bg-blue-600 text-white px-4 py-2 rounded font-bold text-sm" }, "閉じる")))), isStaffModalOpen && /* @__PURE__ */ React.createElement("div", { className: "fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50", onClick: () => setIsStaffModalOpen(false) }, /* @__PURE__ */ React.createElement("div", { className: "bg-white rounded-lg p-4 w-11/12 max-w-5xl shadow-xl", onClick: (e) => e.stopPropagation() }, /* @__PURE__ */ React.createElement("h3", { className: "font-bold text-lg mb-3" }, "👥 職員設定"), /* @__PURE__ */ React.createElement("div", { className: "mb-3 border rounded p-2 bg-slate-50" }, /* @__PURE__ */ React.createElement("div", { className: "flex flex-wrap items-center gap-2" }, /* @__PURE__ */ React.createElement("span", { className: "text-sm font-bold text-gray-700" }, "ユニット"), units.map((u) => /* @__PURE__ */ React.createElement("span", { key: u.id, className: `inline-flex items-center gap-1 rounded border px-1.5 py-0.5 bg-white ${u.id === activeUnit && multiUnit ? "border-blue-400" : "border-gray-300"}` }, /* @__PURE__ */ React.createElement(
+    "input",
+    {
+      type: "text",
+      value: u.name,
+      onChange: (e) => renameUnit(u.id, e.target.value),
+      className: "w-24 text-sm px-1 py-0.5 rounded border border-transparent hover:border-gray-200 focus:border-blue-300 outline-none",
+      title: "クリックして名前を変えられます"
+    }
+  ), /* @__PURE__ */ React.createElement("span", { className: "text-[10px] text-gray-400 whitespace-nowrap" }, allStaffData.filter((st) => unitOfStaff(st) === u.id).length, "名"), units.length > 1 && /* @__PURE__ */ React.createElement("button", { onClick: () => removeUnit(u.id), className: "text-red-500 hover:text-red-700 font-bold leading-none px-0.5", title: "このユニットを削除" }, "×"))), units.length < MAX_UNITS && /* @__PURE__ */ React.createElement("button", { onClick: addUnit, className: "bg-blue-600 text-white px-2 py-1 rounded text-xs font-bold hover:bg-blue-700 whitespace-nowrap" }, "+ ユニットを追加")), /* @__PURE__ */ React.createElement("p", { className: "text-[10px] text-gray-500 mt-1 leading-snug" }, multiUnit ? "職員ごとに所属ユニットを選びます。「〇〇へ応援可」にした職員は、🤝 応援で、そのユニットの人が足りない日に入ります。人数設定はユニットごとに分かれています。" : "2つ以上のユニット（最大3つ）のシフトを作るときは「+ ユニットを追加」を押してください。")), /* @__PURE__ */ React.createElement("div", { className: "max-h-[50dvh] overflow-auto mb-4 border rounded" }, /* @__PURE__ */ React.createElement("table", { className: "w-full text-sm min-w-[600px]" }, /* @__PURE__ */ React.createElement("thead", { className: "bg-gray-50 sticky top-0 z-10 shadow-sm" }, /* @__PURE__ */ React.createElement("tr", null, /* @__PURE__ */ React.createElement("th", { className: "p-2 text-left min-w-[100px]" }, "名前"), multiUnit && /* @__PURE__ */ React.createElement("th", { className: "p-2 text-left min-w-[150px]" }, "ユニット"), /* @__PURE__ */ React.createElement("th", { className: "p-2 text-left min-w-[110px]" }, "グループ"), /* @__PURE__ */ React.createElement("th", { className: "p-2 text-left min-w-[110px]" }, "職種"), /* @__PURE__ */ React.createElement("th", { className: "p-2 text-center whitespace-nowrap min-w-[80px]" }, "夜勤回数"), /* @__PURE__ */ React.createElement("th", { className: "p-2 text-center whitespace-nowrap min-w-[70px]" }, "ペア禁止"), /* @__PURE__ */ React.createElement("th", { className: "p-2 text-center whitespace-nowrap min-w-[140px]" }, "個別時間(非常勤等)"), /* @__PURE__ */ React.createElement("th", { className: "p-2 w-10" }))), /* @__PURE__ */ React.createElement("tbody", null, (multiUnit ? units.flatMap((u) => allStaffData.filter((st) => unitOfStaff(st) === u.id)) : allStaffData).map((s) => {
     var _a2, _b;
     return /* @__PURE__ */ React.createElement("tr", { key: s.id, className: "border-t" }, /* @__PURE__ */ React.createElement("td", { className: "p-2" }, /* @__PURE__ */ React.createElement(
       "input",
@@ -4382,7 +5225,23 @@ function App() {
         onChange: (e) => handleUpdateStaff(s.id, "name", e.target.value),
         className: "border rounded px-2 py-1 w-full"
       }
-    )), /* @__PURE__ */ React.createElement("td", { className: "p-2" }, /* @__PURE__ */ React.createElement(
+    )), multiUnit && /* @__PURE__ */ React.createElement("td", { className: "p-2 align-top" }, /* @__PURE__ */ React.createElement(
+      "select",
+      {
+        value: unitOfStaff(s),
+        onChange: (e) => handleUpdateStaff(s.id, "unit", e.target.value),
+        className: "border rounded px-1 sm:px-2 py-1 w-full text-xs sm:text-sm font-bold"
+      },
+      units.map((u) => /* @__PURE__ */ React.createElement("option", { key: u.id, value: u.id }, u.name))
+    ), /* @__PURE__ */ React.createElement("div", { className: "mt-1 flex flex-col gap-0.5" }, units.filter((u) => u.id !== unitOfStaff(s)).map((u) => /* @__PURE__ */ React.createElement("label", { key: u.id, className: "flex items-center gap-1 text-[10px] sm:text-xs text-gray-600 cursor-pointer", title: `${u.name}の人が足りない日に、応援で入れます` }, /* @__PURE__ */ React.createElement(
+      "input",
+      {
+        type: "checkbox",
+        className: "w-3 h-3 accent-orange-500 cursor-pointer",
+        checked: (s.helpUnits || []).includes(u.id),
+        onChange: (e) => handleUpdateStaff(s.id, "helpUnits", e.target.checked ? [...(s.helpUnits || []).filter((x) => x !== u.id), u.id] : (s.helpUnits || []).filter((x) => x !== u.id))
+      }
+    ), u.name, "へ応援可")))), /* @__PURE__ */ React.createElement("td", { className: "p-2" }, /* @__PURE__ */ React.createElement(
       "select",
       {
         value: s.group,
@@ -4409,7 +5268,7 @@ function App() {
         type: "number",
         placeholder: "自動",
         className: "border rounded w-12 p-1 text-right text-xs",
-        value: nightTargets[s.id] || "",
+        value: nightTargetsBase[s.id] || "",
         onChange: (e) => handleTargetChange(s.id, e.target.value)
       }
     ), /* @__PURE__ */ React.createElement("span", { className: "text-xs text-gray-500" }, "回")) : /* @__PURE__ */ React.createElement("span", { className: "text-xs text-gray-400" }, "-")), /* @__PURE__ */ React.createElement("td", { className: "p-2 text-center" }, ["A", "D"].includes(s.group) ? /* @__PURE__ */ React.createElement(
@@ -4529,7 +5388,7 @@ function App() {
     })())), /* @__PURE__ */ React.createElement("td", { className: "p-2 text-center" }, /* @__PURE__ */ React.createElement("button", { onClick: () => handleRemoveStaff(s.id), className: "text-red-500 hover:text-red-700 font-bold text-lg leading-none" }, "×")));
   })))), /* @__PURE__ */ React.createElement("div", { className: "mb-4 border rounded p-3 bg-gray-50" }, /* @__PURE__ */ React.createElement("div", { className: "text-sm font-bold text-gray-700 mb-2" }, "職種の項目"), /* @__PURE__ */ React.createElement("div", { className: "flex flex-wrap gap-1.5 mb-2" }, qualificationOptions.map((q) => {
     const isBase = DEFAULT_QUALIFICATIONS.includes(q);
-    const count = staffData.filter((st) => st.qualification === q).length;
+    const count = allStaffData.filter((st) => st.qualification === q).length;
     return /* @__PURE__ */ React.createElement("span", { key: q, className: `inline-flex items-center gap-1 px-2 py-0.5 rounded border text-xs ${isBase ? "bg-white border-gray-300 text-gray-700" : "bg-indigo-50 border-indigo-200 text-indigo-700"}` }, q, /* @__PURE__ */ React.createElement("span", { className: "text-gray-400" }, "(", count, ")"), !isBase && /* @__PURE__ */ React.createElement(
       "button",
       {
@@ -4559,9 +5418,10 @@ function App() {
     },
     "+ 職種を追加"
   )), /* @__PURE__ */ React.createElement("p", { className: "text-[10px] text-gray-500 mt-1" }, "基本の4項目（介護福祉士・実務者研修・初任者研修・無資格）は削除できません。追加した項目は × で削除できます。")), /* @__PURE__ */ React.createElement("div", { className: "flex justify-between items-center" }, /* @__PURE__ */ React.createElement("button", { onClick: handleAddStaff, className: "bg-green-600 text-white px-3 py-2 rounded text-sm font-bold hover:bg-green-700" }, "+ 新規追加"), /* @__PURE__ */ React.createElement("button", { onClick: () => setIsStaffModalOpen(false), className: "bg-slate-600 text-white px-4 py-2 rounded font-bold text-sm" }, "閉じる")))), settingForbiddenPairsFor && (() => {
-    const staff = staffData.find((s) => s.id === settingForbiddenPairsFor);
+    const staff = allStaffData.find((s) => s.id === settingForbiddenPairsFor);
     if (!staff) return null;
-    const nightStaffs = staffData.filter((s) => ["A", "D"].includes(s.group) && s.id !== staff.id);
+    const myUnit = unitOfStaff(staff);
+    const nightStaffs = allStaffData.filter((s) => ["A", "D"].includes(s.group) && s.id !== staff.id && (!multiUnit || unitOfStaff(s) === myUnit || (s.helpUnits || []).includes(myUnit) || (staff.helpUnits || []).includes(unitOfStaff(s))));
     return /* @__PURE__ */ React.createElement("div", { className: "fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[60]", onClick: () => setSettingForbiddenPairsFor(null) }, /* @__PURE__ */ React.createElement("div", { className: "bg-white rounded-lg p-4 w-11/12 max-w-sm shadow-xl max-h-[80dvh] flex flex-col", onClick: (e) => e.stopPropagation() }, /* @__PURE__ */ React.createElement("h3", { className: "font-bold text-lg mb-2" }, "🚫 ", staff.name, " のペア禁止設定"), /* @__PURE__ */ React.createElement("p", { className: "text-xs text-gray-500 mb-4" }, "夜勤で一緒に配置しない職員にチェックを入れてください。"), /* @__PURE__ */ React.createElement("div", { className: "flex-1 overflow-y-auto border rounded p-2 mb-4 grid grid-cols-2 gap-2" }, nightStaffs.length > 0 ? nightStaffs.map((ns) => {
       var _a2;
       const isForbidden = (_a2 = staff.forbiddenPairs) == null ? void 0 : _a2.includes(ns.id);
@@ -4573,9 +5433,9 @@ function App() {
           checked: isForbidden || false,
           onChange: () => handleToggleForbiddenPair(staff.id, ns.id)
         }
-      ), /* @__PURE__ */ React.createElement("span", { className: "text-sm font-medium" }, ns.name));
+      ), /* @__PURE__ */ React.createElement("span", { className: "text-sm font-medium" }, ns.name, multiUnit && unitOfStaff(ns) !== myUnit ? `（${unitName(unitOfStaff(ns))}）` : ""));
     }) : /* @__PURE__ */ React.createElement("p", { className: "text-sm text-gray-500 col-span-2 text-center py-4" }, "他の夜勤職員がいません")), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end shrink-0" }, /* @__PURE__ */ React.createElement("button", { onClick: () => setSettingForbiddenPairsFor(null), className: "bg-slate-600 text-white px-4 py-2 rounded font-bold text-sm" }, "完了"))));
-  })(), isPrevNightModalOpen && /* @__PURE__ */ React.createElement("div", { className: "fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50", onClick: () => setIsPrevNightModalOpen(false) }, /* @__PURE__ */ React.createElement("div", { className: "bg-white rounded-lg p-4 w-11/12 max-w-sm shadow-xl", onClick: (e) => e.stopPropagation() }, /* @__PURE__ */ React.createElement("h3", { className: "font-bold text-lg mb-2" }, "🌙 前月夜勤者設定"), /* @__PURE__ */ React.createElement("p", { className: "text-xs text-gray-500 mb-4" }, "選択した職員は1日が「明」、2日が「公休」になります。"), /* @__PURE__ */ React.createElement("div", { className: "max-h-[50dvh] overflow-y-auto mb-4 border rounded p-2 grid grid-cols-2 gap-2" }, staffData.filter((s) => ["A", "D"].includes(s.group)).map((s) => /* @__PURE__ */ React.createElement("label", { key: s.id, className: "flex items-center gap-2 p-2 hover:bg-gray-50 cursor-pointer rounded border border-transparent hover:border-gray-200" }, /* @__PURE__ */ React.createElement(
+  })(), isPrevNightModalOpen && /* @__PURE__ */ React.createElement("div", { className: "fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50", onClick: () => setIsPrevNightModalOpen(false) }, /* @__PURE__ */ React.createElement("div", { className: "bg-white rounded-lg p-4 w-11/12 max-w-sm shadow-xl", onClick: (e) => e.stopPropagation() }, /* @__PURE__ */ React.createElement("h3", { className: "font-bold text-lg mb-2" }, "🌙 前月夜勤者設定"), /* @__PURE__ */ React.createElement("p", { className: "text-xs text-gray-500 mb-4" }, "選択した職員は1日が「明」、2日が「公休」になります。"), /* @__PURE__ */ React.createElement("div", { className: "max-h-[50dvh] overflow-y-auto mb-4 border rounded p-2 grid grid-cols-2 gap-2" }, homeStaff.filter((s) => ["A", "D"].includes(s.group)).map((s) => /* @__PURE__ */ React.createElement("label", { key: s.id, className: "flex items-center gap-2 p-2 hover:bg-gray-50 cursor-pointer rounded border border-transparent hover:border-gray-200" }, /* @__PURE__ */ React.createElement(
     "input",
     {
       type: "checkbox",
