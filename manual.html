@@ -170,7 +170,7 @@
       <tr><th>場所</th><th>内容</th></tr>
       <tr><td>いちばん上の帯</td><td><span class="ui">◀ 2026.11 ▶</span> で作成する年月を切り替えます。<span class="ui">公休: 9 日</span> はその月の公休日数です（初期値は31日の月が9日、それ以外は8日）。<span class="ui">📖 使い方</span> でこの説明書が開きます。</td></tr>
       <tr><td>メッセージ欄</td><td>いま何をする段階か、処理の結果、うまくいかなかった理由などが表示されます。<b>迷ったらまずここを読んでください。</b></td></tr>
-      <tr><td>操作ボタン</td><td>ステップごとに表示が変わります。右側の <span class="ui">🔒 一括ロック</span> <span class="ui">🔓 全解除</span> <span class="ui">💾 CSV</span> <span class="ui">↩️ 戻る</span> <span class="ui">◀</span> <span class="ui">🗑️</span> はいつでも使えます（<a href="#edit">7章</a>）。</td></tr>
+      <tr><td>操作ボタン</td><td>ステップごとに表示が変わります。ステップ0には、設定をまとめた <span class="ui">⚙️ 設定</span>（職員設定・人数設定・時間設定・前月夜勤・設定ファイルの保存/読込）と、<span class="ui">⚡ 自動作成（全ステップ）</span> があります。右側の <span class="ui">🔒 一括ロック</span> <span class="ui">🔓 全解除</span> <span class="ui">💾 CSV</span> <span class="ui">↩️ 戻る</span> <span class="ui">◀</span> <span class="ui">🗑️</span> はいつでも使えます（<a href="#edit">7章</a>）。</td></tr>
       <tr><td>ステップ表示</td><td><span class="ui">0. 設定</span>〜<span class="ui">5. 早遅均</span> のうち、今いるステップが青く表示されます。</td></tr>
       <tr><td>シフト表（左）</td><td>職員名と、その月の集計（<b>夜</b>＝夜勤回数、<b>休</b>＝公休数、<b>早</b>・<b>日</b>・<b>遅</b>＝早番・日勤・遅番の回数）。夜勤の職員には <span class="ui">🌙先</span> ボタンがあります。行は ⋮⋮ をドラッグして並び替えられます。</td></tr>
       <tr><td>シフト表（右）</td><td>日付ごとの勤務。マスをクリックすると入力画面が開きます。土曜は青、日曜は赤の列です。</td></tr>
@@ -181,7 +181,7 @@
   <!-- 4 -->
   <section id="codes">
     <h2><span class="num">4</span>勤務記号の一覧</h2>
-    <p>時刻は初期値です。<span class="ui">⏰ 時間設定</span> で施設に合わせて変えられます。</p>
+    <p>時刻は初期値です。<span class="ui">⚙️ 設定</span> の <span class="ui">⏰ 時間設定</span> で施設に合わせて変えられます。</p>
     <table>
       <tr><th>記号</th><th>意味</th><th>時間（初期値）</th></tr>
       <tr><td><span class="chip c-day">日</span></td><td>日勤</td><td>8:30〜17:00</td></tr>
@@ -201,9 +201,9 @@
   <!-- 5 -->
   <section id="setup">
     <h2><span class="num">5</span>最初の準備（初回のみ）</h2>
-    <p>はじめに職員と必要人数を登録します。一度登録すれば、翌月からはそのまま使えます。</p>
+    <p>はじめに職員と必要人数を登録します。一度登録すれば、翌月からはそのまま使えます。設定は、ステップ0の <span class="ui">⚙️ 設定</span> を押すと出る画面から開きます（職員設定・人数設定・時間設定・前月夜勤と、設定ファイルの保存・読込）。</p>
 
-    <h3>5-1　職員設定（<span class="ui">👥 職員設定</span>）</h3>
+    <h3>5-1　職員設定（<span class="ui">⚙️ 設定</span> → <span class="ui">👥 職員設定</span>）</h3>
     <figure><img src="manual_img/staff.jpg" alt="職員設定の画面" loading="lazy"><figcaption>職員設定。初期状態では見本として「職員A〜C」が入っています。</figcaption></figure>
     <table>
       <tr><th>項目</th><th>内容</th></tr>
@@ -228,7 +228,7 @@
       <tr><td>追加・削除</td><td><span class="ui">＋ 新規追加</span> で職員を追加、行の右端の × で削除します。</td></tr>
     </table>
 
-    <h3>5-2　必要人数（<span class="ui">📊 人数設定</span>）</h3>
+    <h3>5-2　必要人数（<span class="ui">⚙️ 設定</span> → <span class="ui">📊 人数設定</span>）</h3>
     <figure><img src="manual_img/targets.jpg" alt="必要人数設定の画面" loading="lazy"><figcaption>必要人数設定。曜日ごとに入力します。</figcaption></figure>
     <table>
       <tr><th>項目</th><th>内容</th></tr>
@@ -241,7 +241,7 @@
     </table>
     <div class="note"><b>夜勤に必ず1名含める職種を使うときの注意</b>対象の職員の職種を、<span class="ui">👥 職員設定</span> で正しく選んでおいてください。また、その職種の職員の夜勤回数の合計が、その月の日数（30〜31回）以上必要です。人数が少ないと、その職種の職員の夜勤回数が多くなります（例：看護師3名なら1人あたり約10回）。</div>
 
-    <h3>5-3　時間と表示（<span class="ui">⏰ 時間設定</span>）</h3>
+    <h3>5-3　時間と表示（<span class="ui">⚙️ 設定</span> → <span class="ui">⏰ 時間設定</span>）</h3>
     <figure><img src="manual_img/times.jpg" alt="シフト時間設定の画面" loading="lazy"><figcaption>シフト時間と、表の下に在籍人数を表示する時刻（在籍スナップショット）を設定します。</figcaption></figure>
     <p>「在籍スナップショット時刻」に9時・16時などを追加すると、その時刻に勤務している人数が表の下に表示されます。「警告ライン」の人数より少ないと赤く表示されます。</p>
 
@@ -274,22 +274,23 @@
     </ul>
 
     <div class="tip"><b>設定はファイルに保存しておきましょう</b>
-      <span class="ui">⚙️💾 設定保存</span> で、職員・人数・時間の設定をファイル（JSON）に保存できます。パソコンを替えるときや、ブラウザのデータが消えたときは <span class="ui">⚙️📂 設定読込</span> で元に戻せます。作成中のシフト表は、設定を読み込んでも消えません。</div>
+      <span class="ui">⚙️ 設定</span> の中の <span class="ui">⚙️💾 設定保存</span> で、職員・人数・時間の設定をファイル（JSON）に保存できます。パソコンを替えるときや、ブラウザのデータが消えたときは <span class="ui">⚙️📂 設定読込</span> で元に戻せます。作成中のシフト表は、設定を読み込んでも消えません。</div>
   </section>
 
   <!-- 6 -->
   <section id="monthly">
     <h2><span class="num">6</span>毎月の作成手順（6ステップ）</h2>
     <p>画面上部の <span class="ui">次へ ▶</span> で順に進みます。<b>各ステップの後に表を見て、気になるところは手で直してから次へ進んでください。</b>前のステップに戻るときは <span class="ui">◀</span> を押します。</p>
+    <div class="tip"><b>ワンプッシュで最後まで作る</b>ステップ0の <span class="ui">⚡ 自動作成（全ステップ）</span> を押すと、ステップ1〜4（確保・夜勤・日勤・早遅）を自動で最後まで進めます。できあがった表を見て、気になるところを手で直してください。夜勤の人数を満たせないときは、ステップ2で止まり、メッセージに足りない日が出ます。1つずつ確認しながら作りたいときは、これまでどおり <span class="ui">次へ ▶</span> で進めてください。</div>
 
     <div class="stepcard">
       <div class="head"><span class="pill">0. 設定</span><span class="title">その月の条件を入れる</span></div>
       <ol class="steps">
         <li>帯の <span class="ui">◀ ▶</span> で作成する年月を選び、<span class="ui">公休</span> の日数を確認します。</li>
-        <li><b>前月の情報を入れます。</b>前月のシフトをCSVで保存してある場合は <span class="ui">📁 先月読込</span>。連勤や夜勤明けを、月をまたいでチェックできるようになります。CSVがない場合は <span class="ui">🌙 前月夜勤</span> で、前月末日に夜勤だった職員を選びます（その職員は1日が「明」、2日が「公休」になります）。
+        <li><b>前月の情報を入れます。</b>前月のシフトをCSVで保存してある場合は <span class="ui">📁 先月読込</span>。連勤や夜勤明けを、月をまたいでチェックできるようになります。CSVがない場合は <span class="ui">⚙️ 設定</span> の <span class="ui">🌙 前月夜勤</span> で、前月末日に夜勤だった職員を選びます（その職員は1日が「明」、2日が「公休」になります）。
           <figure><img src="manual_img/prevnight.jpg" alt="前月夜勤者設定の画面" loading="lazy"><figcaption>前月夜勤者の設定</figcaption></figure></li>
         <li><b>希望休や決まっている勤務を入れます。</b>表のマスをクリックして入力します（<a href="#edit">7章</a>）。希望休をGoogleフォームで集めている場合は <span class="ui">🙋📂 希望休読込</span> で一括で取り込めます（<a href="#requests">10章</a>）。</li>
-        <li><span class="ui">次へ ▶</span> を押します。</li>
+        <li><span class="ui">次へ ▶</span> を押します（最後まで自動で作るときは <span class="ui">⚡ 自動作成（全ステップ）</span>）。</li>
       </ol>
     </div>
 
@@ -376,8 +377,8 @@
       <tr><td><span class="ui">💾 CSV</span></td><td>表示中の月のシフト表を書き出します（ファイル名：シフト表_2026年11月.csv など）。Excelで開けます。複数のユニットがあるときは、全ユニットの職員を1つのファイルに出します（「ユニット」の列が付き、応援の日は「日(ひまわり)」のように行き先を書きます）。</td><td>CSV</td></tr>
       <tr><td><span class="ui">📁 先月読込</span></td><td>前月のCSVを読み込み、月をまたいだ連勤・夜勤のチェックに使います。前月末日が夜勤の職員は、自動で「前月夜勤」に設定されます。</td><td>CSV</td></tr>
       <tr><td><span class="ui">📁 当月読込</span></td><td>当月のCSVを読み込みます。<b>入力済みのマスは自動でロック</b>されます（全解除で外せます）。<b>職員の一覧もCSVの内容に置き換わり、CSVにない職員は職員設定から外れます。</b>同じ名前の職員は、個別の設定が引き継がれます。</td><td>CSV</td></tr>
-      <tr><td><span class="ui">⚙️💾 設定保存</span></td><td>職員・人数・時間の設定を保存します。ユニットと、ユニットごとの人数設定も含みます。</td><td>JSON</td></tr>
-      <tr><td><span class="ui">⚙️📂 設定読込</span></td><td>保存した設定で上書きします。作成中のシフト表は残り、同じ名前の職員は引き継がれます。</td><td>JSON</td></tr>
+      <tr><td><span class="ui">⚙️💾 設定保存</span></td><td>（<span class="ui">⚙️ 設定</span> の中）職員・人数・時間の設定を保存します。ユニットと、ユニットごとの人数設定も含みます。</td><td>JSON</td></tr>
+      <tr><td><span class="ui">⚙️📂 設定読込</span></td><td>（<span class="ui">⚙️ 設定</span> の中）保存した設定で上書きします。作成中のシフト表は残り、同じ名前の職員は引き継がれます。</td><td>JSON</td></tr>
     </table>
     <div class="note"><b>CSVの形式</b>1行目が「氏名,グループ,1(日),2(月),…」、2行目以降が職員ごとの勤務です。このアプリで書き出したCSVをそのまま使うのが確実です。自分で作る場合は同じ形式にしてください。</div>
     <div class="warn"><b>個人情報の取り扱い</b>書き出したCSVや設定ファイルには、職員の実名が入っています。施設の情報管理のルールに従って保管し、インターネット上（GitHubなど）には公開しないでください。</div>
