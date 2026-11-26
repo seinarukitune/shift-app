@@ -165,7 +165,7 @@
   <!-- 3 -->
   <section id="screen">
     <h2><span class="num">3</span>画面の見方</h2>
-    <figure><img src="manual_img/main.jpg" alt="アプリのメイン画面" loading="lazy"><figcaption>メイン画面（職員名は架空です）</figcaption></figure>
+    <figure><img src="manual_img/main.jpg?v=23" alt="アプリのメイン画面" loading="lazy"><figcaption>メイン画面（職員名は架空です）</figcaption></figure>
     <table>
       <tr><th>場所</th><th>内容</th></tr>
       <tr><td>いちばん上の帯</td><td><span class="ui">◀ 2026.11 ▶</span> で作成する年月を切り替えます。<span class="ui">公休: 9 日</span> はその月の公休日数です（初期値は31日の月が9日、それ以外は8日）。<span class="ui">📖 使い方</span> でこの説明書が開きます。</td></tr>
@@ -202,10 +202,10 @@
   <section id="setup">
     <h2><span class="num">5</span>最初の準備（初回のみ）</h2>
     <p>はじめに職員と必要人数を登録します。一度登録すれば、翌月からはそのまま使えます。設定は、画面上部の <span class="ui">⚙️ 設定</span>（どのステップでも表示されます）を押すと出る画面から開きます（職員設定・人数設定・時間設定・前月夜勤と、設定ファイルの保存・読込）。</p>
-    <figure><img src="manual_img/settings.jpg" alt="設定の画面" loading="lazy"><figcaption><span class="ui">⚙️ 設定</span> を押すと出る画面。ここから各設定を開きます。</figcaption></figure>
+    <figure><img src="manual_img/settings.jpg?v=23" alt="設定の画面" loading="lazy"><figcaption><span class="ui">⚙️ 設定</span> を押すと出る画面。ここから各設定を開きます。</figcaption></figure>
 
     <h3>5-1　職員設定（<span class="ui">⚙️ 設定</span> → <span class="ui">👥 職員設定</span>）</h3>
-    <figure><img src="manual_img/staff.jpg" alt="職員設定の画面" loading="lazy"><figcaption>職員設定。初期状態では見本として「職員A〜C」が入っています。上の「ユニット」で、ユニットの追加や名前の変更ができます。</figcaption></figure>
+    <figure><img src="manual_img/staff.jpg?v=23" alt="職員設定の画面" loading="lazy"><figcaption>職員設定。初期状態では見本として「職員A〜C」が入っています。上の「ユニット」で、ユニットの追加や名前の変更ができます。</figcaption></figure>
     <table>
       <tr><th>項目</th><th>内容</th></tr>
       <tr><td>名前</td><td>職員名。CSVの読み込みや希望休の取り込みでは、この名前で照合します。</td></tr>
@@ -230,7 +230,7 @@
     </table>
 
     <h3>5-2　必要人数（<span class="ui">⚙️ 設定</span> → <span class="ui">📊 人数設定</span>）</h3>
-    <figure><img src="manual_img/targets.jpg" alt="必要人数設定の画面" loading="lazy"><figcaption>必要人数設定。曜日ごとに入力します。</figcaption></figure>
+    <figure><img src="manual_img/targets.jpg?v=23" alt="必要人数設定の画面" loading="lazy"><figcaption>必要人数設定。曜日ごとに入力します。</figcaption></figure>
     <table>
       <tr><th>項目</th><th>内容</th></tr>
       <tr><td>朝ピーク必要数</td><td>入浴などで人手が要る朝の時間帯に、在籍していてほしい人数（早番・日勤・早日・日遅の合計。遅番は含みません）。曜日ごとに設定します。</td></tr>
@@ -243,7 +243,7 @@
     <div class="note"><b>夜勤に必ず1名含める職種を使うときの注意</b>対象の職員の職種を、<span class="ui">👥 職員設定</span> で正しく選んでおいてください。また、その職種の職員の夜勤回数の合計が、その月の日数（30〜31回）以上必要です。人数が少ないと、その職種の職員の夜勤回数が多くなります（例：看護師3名なら1人あたり約10回）。</div>
 
     <h3>5-3　時間と表示（<span class="ui">⚙️ 設定</span> → <span class="ui">⏰ 時間設定</span>）</h3>
-    <figure><img src="manual_img/times.jpg" alt="シフト時間設定の画面" loading="lazy"><figcaption>シフト時間・実働時間・公休の決め方と、表の下に在籍人数を表示する時刻（在籍スナップショット）を設定します。</figcaption></figure>
+    <figure><img src="manual_img/times.jpg?v=23" alt="シフト時間設定の画面" loading="lazy"><figcaption>シフト時間・実働時間・公休の決め方と、表の下に在籍人数を表示する時刻（在籍スナップショット）を設定します。</figcaption></figure>
     <p>「在籍スナップショット時刻」に9時・16時などを追加すると、その時刻に勤務している人数が表の下に表示されます。「警告ライン」の人数より少ないと赤く表示されます。</p>
     <h3 id="hours">5-4　勤務時間で公休数を決める（常勤）</h3>
     <p>月の勤務時間（例：170時間以上）で公休数を決めている施設向けです。<span class="ui">⚙️ 設定</span> → <span class="ui">⏰ 時間設定</span> の「公休の決め方」で「勤務時間で決める」を選びます。</p>
@@ -304,7 +304,7 @@
       <ol class="steps">
         <li>帯の <span class="ui">◀ ▶</span> で作成する年月を選び、<span class="ui">公休</span> の日数を確認します。</li>
         <li><b>前月の情報を入れます。</b>前月のシフトをCSVで保存してある場合は <span class="ui">📁 先月読込</span>。連勤や夜勤明けを、月をまたいでチェックできるようになります。CSVがない場合は <span class="ui">⚙️ 設定</span> の <span class="ui">🌙 前月夜勤</span> で、前月末日に夜勤だった職員を選びます（その職員は1日が「明」、2日が「公休」になります）。
-          <figure><img src="manual_img/prevnight.jpg" alt="前月夜勤者設定の画面" loading="lazy"><figcaption>前月夜勤者の設定</figcaption></figure></li>
+          <figure><img src="manual_img/prevnight.jpg?v=23" alt="前月夜勤者設定の画面" loading="lazy"><figcaption>前月夜勤者の設定</figcaption></figure></li>
         <li><b>希望休や決まっている勤務を入れます。</b>表のマスをクリックして入力します（<a href="#edit">7章</a>）。希望休をGoogleフォームで集めている場合は <span class="ui">📋 Googleフォーム連携</span> から一括で取り込めます（<a href="#requests">10章</a>）。</li>
         <li><span class="ui">次へ ▶</span> を押します（最後まで自動で作るときは <span class="ui">⚡ 自動作成（全ステップ）</span>）。</li>
       </ol>
@@ -318,7 +318,7 @@
     <div class="stepcard">
       <div class="head"><span class="pill">2. 夜勤</span><span class="title">夜勤を自動で配置する</span></div>
       <p><span class="ui">🔄 自動</span> を押すと、夜勤人数・ロックしたマス・ペア禁止などのルールを守って夜勤を配置します。<span class="ui">🔀 再配置</span> を押すたびに、同じ品質の別パターンを探します（品質が下がる案しか見つからない場合は、配置を変えません）。</p>
-      <figure><img src="manual_img/step2.jpg" alt="夜勤を配置した状態" loading="lazy"><figcaption>ステップ2の後。「当」と「明」が入ります。</figcaption></figure>
+      <figure><img src="manual_img/step2.jpg?v=23" alt="夜勤を配置した状態" loading="lazy"><figcaption>ステップ2の後。「当」と「明」が入ります。</figcaption></figure>
       <p>特定の職員の夜勤を先に決めたいときは、名前の左の <span class="ui">🌙先</span> を押すと、その職員の夜勤を目標回数まで優先して配置し、ロックします。</p>
       <div class="note"><b>夜勤人数を満たせないとき</b>メッセージ欄と画面上部に、足りない日が表示されます。この場合、自動配置は適用されません。夜勤ができる職員数、前月の夜勤、ロックしたマス、公休やNGの設定を見直してください。</div>
       <div class="note"><b>必ず含める職種の職員がいない夜があるとき</b>「夜勤に必ず1名含める職種」を設定していて、その職種の人数がどうしても足りない月は、夜勤人数（2名など）を優先して確保したうえで、その職種がいない日を赤い枠の警告で表示します。該当日は、希望休やロックを見直すか、手で入れ替えてください。</div>
@@ -337,7 +337,7 @@
     <div class="stepcard">
       <div class="head"><span class="pill">5. 早遅均</span><span class="title">早番・遅番を均して仕上げる</span></div>
       <p><span class="ui">🔄 再早遅</span> を押すたびに、早番・遅番の別パターンを作ります。偏りが少ない案になるまで何度か試してください。</p>
-      <figure><img src="manual_img/done.jpg" alt="完成したシフト表" loading="lazy"><figcaption>完成したシフト表の例（職員名は架空）</figcaption></figure>
+      <figure><img src="manual_img/done.jpg?v=23" alt="完成したシフト表" loading="lazy"><figcaption>完成したシフト表の例（職員名は架空）</figcaption></figure>
     </div>
 
     <h3>仕上げ</h3>
@@ -352,7 +352,7 @@
   <section id="edit">
     <h2><span class="num">7</span>手で直す・確定する</h2>
     <h3>マスをクリックして入力する</h3>
-    <figure><img src="manual_img/cell.jpg" alt="マスの設定画面" loading="lazy"><figcaption>マスをクリックすると開く設定画面</figcaption></figure>
+    <figure><img src="manual_img/cell.jpg?v=23" alt="マスの設定画面" loading="lazy"><figcaption>マスをクリックすると開く設定画面</figcaption></figure>
     <table>
       <tr><th>① シフトの直接入力（確定）</th><td>押した勤務がそのマスに入ります。「空」でマスを空にします。</td></tr>
       <tr><th>② 希望・NG設定（自動配置用）</th><td><b>希望シフト</b>：自動配置のとき最優先で入れる勤務（希望休など）。入ったマスには「希」の印が付きます。<br><b>NGシフト</b>：その日に入れない勤務（複数選べます）。マスに「NG」の印が付きます。<br>選んだら <span class="ui">条件を保存</span> を押します。</td></tr>
@@ -371,7 +371,7 @@
   <!-- 8 -->
   <section id="check">
     <h2><span class="num">8</span>警告の見方と確認</h2>
-    <figure><img src="manual_img/alert.jpg" alt="赤枠の警告" loading="lazy"><figcaption>夜勤明けの翌日に日勤を入れた例。マスが赤枠になり、公休数（休）もオレンジ色になります。</figcaption></figure>
+    <figure><img src="manual_img/alert.jpg?v=23" alt="赤枠の警告" loading="lazy"><figcaption>夜勤明けの翌日に日勤を入れた例。マスが赤枠になり、公休数（休）もオレンジ色になります。</figcaption></figure>
     <table>
       <tr><th>表示</th><th>意味</th></tr>
       <tr><td><span class="red-frame"></span> マスの赤枠</td><td>次のどれかに当たります。<br>・連勤が上限を超えている（個別の指定がなければ4連勤まで）<br>・5日の間に夜勤が3回以上入っている（夜勤過密）<br>・夜勤明けの翌日に出勤している（D群は夜勤も対象）</td></tr>
@@ -382,7 +382,7 @@
       <tr><td>「夜勤」の集計がオレンジ色で「!」付き</td><td>夜勤の人数は足りているが、「夜勤に必ず1名含める職種」の職員がいない（数字にマウスを重ねると職種名が出ます）</td></tr>
     </table>
     <h3>時間帯ごとの人数を見る</h3>
-    <figure><img src="manual_img/detail.jpg" alt="タイムライン画面" loading="lazy"><figcaption>集計行の <span class="ui">🔍詳細</span> で、その日の職員ごとの勤務時間と、時間帯別の合計人数が見られます。</figcaption></figure>
+    <figure><img src="manual_img/detail.jpg?v=23" alt="タイムライン画面" loading="lazy"><figcaption>集計行の <span class="ui">🔍詳細</span> で、その日の職員ごとの勤務時間と、時間帯別の合計人数が見られます。</figcaption></figure>
   </section>
 
   <!-- 9 -->
@@ -397,7 +397,7 @@
       <tr><td><span class="ui">⚙️💾 設定保存</span></td><td>（<span class="ui">⚙️ 設定</span> の中）職員・人数・時間の設定を保存します。ユニットと、ユニットごとの人数設定も含みます。</td><td>JSON</td></tr>
       <tr><td><span class="ui">⚙️📂 設定読込</span></td><td>（<span class="ui">⚙️ 設定</span> の中）保存した設定で上書きします。作成中のシフト表は残り、同じ名前の職員は引き継がれます。</td><td>JSON</td></tr>
     </table>
-    <figure><img src="manual_img/print.jpg" alt="印刷の画面" loading="lazy"><figcaption><span class="ui">🖨️ 印刷</span> の画面。左で印刷する情報を選び、右のプレビューで確認してから印刷します。</figcaption></figure>
+    <figure><img src="manual_img/print.jpg?v=23" alt="印刷の画面" loading="lazy"><figcaption><span class="ui">🖨️ 印刷</span> の画面。左で印刷する情報を選び、右のプレビューで確認してから印刷します。</figcaption></figure>
     <div class="note"><b>CSVの形式</b>1行目が「氏名,グループ,1(日),2(月),…」、2行目以降が職員ごとの勤務です。このアプリで書き出したCSVをそのまま使うのが確実です。自分で作る場合は同じ形式にしてください。</div>
     <div class="warn"><b>個人情報の取り扱い</b>書き出したCSVや設定ファイルには、職員の実名が入っています。施設の情報管理のルールに従って保管し、インターネット上（GitHubなど）には公開しないでください。</div>
   </section>
