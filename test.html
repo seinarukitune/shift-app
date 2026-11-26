@@ -29,6 +29,12 @@
     ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 3px; }
     .hide-scrollbar::-webkit-scrollbar { display: none; }
     .hide-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+    /* 印刷：画面の固定の高さ・スクロールを外し、印刷用のシフト表だけを出す */
+    @media print {
+      html, body { height: auto !important; overflow: visible !important; background: #fff !important; }
+      #root { height: auto !important; display: block !important; }
+      .print-sheet { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    }
   </style>
 </head>
 <body class="bg-gray-100 text-gray-800 font-sans h-[100dvh] overflow-hidden">
@@ -149,6 +155,7 @@ const CHANGELOG = [
     "職員設定・人数設定・時間設定・前月夜勤と、設定ファイルの保存・読込を「⚙️ 設定」にまとめ、画面上部のボタンを整理しました。「⚙️ 設定」はどのステップでも開けます。",
     "「希望休読込」と「名簿書出」を「📋 Googleフォーム連携」にまとめ、説明を付けました（Googleフォームで希望休を集めている施設向けの機能です）。",
     "前月の末日が夜勤の職員（前月夜勤）の1日の「明」が、夜勤の自動配置で消えてしまう不具合を直しました。",
+    "シフト表を印刷できるようにしました（画面右上の「🖨️ 印刷」）。職員ごとの集計（夜勤・公休・早番・日勤・遅番の回数、勤務時間、職種）と、日ごとの人数（夜勤・早番・日勤・遅番・朝ピーク・夕方・出勤の合計）を、チェックで選んで印刷できます。",
     "常勤の公休数を「勤務時間」で決められるようにしました（時間設定の「公休の決め方」）。月の目標は法定上限（40時間×日数÷7）か指定の時間で、職員ごとにも入力できます。夜勤の回数などに合わせて、職員ごとに公休数を計算します。非常勤は今までどおりです。"
   ] },
   { version: "v.22.5", date: "2026-11-20", items: [
@@ -183,6 +190,41 @@ const CHANGELOG = [
   ] }
 ];
 const APP_VERSION = CHANGELOG[0].version;
+const PRINT_DEFAULTS = {
+  title: "",
+  scope: "current",
+  color: true,
+  paper: "A4L",
+  legend: true,
+  pNight: true,
+  pOff: true,
+  pEarly: true,
+  pDay: true,
+  pLate: true,
+  pHours: false,
+  pQual: false,
+  dNight: true,
+  dEarly: true,
+  dDay: true,
+  dLate: true,
+  dMorning: false,
+  dEvening: false,
+  dTotal: false
+};
+const PRINT_COLORS = {
+  "当": "#c7d2fe",
+  "明": "#fed7aa",
+  "×": "#fee2e2",
+  "有": "#fbcfe8",
+  "リ": "#bbf7d0",
+  "研修": "#ecfccb",
+  "日": "#cffafe",
+  "早": "#fef9c3",
+  "遅": "#ede9fe",
+  "早日": "#fde68a",
+  "日遅": "#f5d0fe"
+};
+const PRINT_PAPERS = { A4L: "A4 landscape", A4P: "A4 portrait", A3L: "A3 landscape" };
 const MAX_UNITS = 3;
 const AWAY_SHIFT = "他";
 const headWeight = (staff) => {
@@ -371,6 +413,21 @@ function App() {
   const [isStaffModalOpen, setIsStaffModalOpen] = useState(false);
   const [isSettingsHubOpen, setIsSettingsHubOpen] = useState(false);
   const [isFormLinkOpen, setIsFormLinkOpen] = useState(false);
+  const [isPrintOpen, setIsPrintOpen] = useState(false);
+  const [printOpts, setPrintOpts] = useState(() => {
+    try {
+      const v = JSON.parse(localStorage.getItem("print_options_v1") || "null");
+      if (v && typeof v === "object") return { ...PRINT_DEFAULTS, ...v };
+    } catch (e) {
+    }
+    return { ...PRINT_DEFAULTS };
+  });
+  useEffect(() => {
+    try {
+      localStorage.setItem("print_options_v1", JSON.stringify(printOpts));
+    } catch (e) {
+    }
+  }, [printOpts]);
   const [isContactOpen, setIsContactOpen] = useState(false);
   const [contactForm, setContactForm] = useState({ type: CONTACT_TYPES[0], name: "", facility: "", body: "" });
   const [contactNotice, setContactNotice] = useState("");
@@ -5029,6 +5086,81 @@ function App() {
     return { items, ok: items.every((i) => i.ok) };
   };
   const fmtNum = (n) => Number.isInteger(n) ? String(n) : n.toFixed(1);
+  const printUnits = multiUnit && printOpts.scope === "all" ? unitIds : [activeUnit];
+  const renderPrintSheet = (uid, isLast) => {
+    const o = printOpts;
+    const N = SHIFT_TYPES;
+    const home = allStaffData.filter((st) => unitOfStaff(st) === uid);
+    const guests = multiUnit ? allStaffData.filter((st) => unitOfStaff(st) !== uid && Object.values(helpAssign[st.id] || {}).includes(uid)) : [];
+    const inUnit = (st, d) => {
+      var _a2;
+      return (((_a2 = helpAssign[st.id]) == null ? void 0 : _a2[d]) || unitOfStaff(st)) === uid;
+    };
+    const valOf = (st, d) => {
+      var _a2;
+      return ((_a2 = fullSchedule[st.id]) == null ? void 0 : _a2[d]) || "";
+    };
+    const sumDay = (d, pred, weighted = true) => allStaffData.reduce((a, st) => a + (inUnit(st, d) && pred(valOf(st, d)) ? weighted ? headWeight(st) : 1 : 0), 0);
+    const personCols = [
+      o.pNight && { key: "night", label: "夜", get: (st, c) => ["A", "D"].includes(st.group) ? c.night : "" },
+      o.pOff && { key: "off", label: "休", get: (st, c) => c.off },
+      o.pEarly && { key: "early", label: "早", get: (st, c) => c.early },
+      o.pDay && { key: "day", label: "日", get: (st, c) => c.day },
+      o.pLate && { key: "late", label: "遅", get: (st, c) => c.late },
+      o.pHours && { key: "hours", label: "時間", get: (st) => fmtHours(monthHoursOf(st.id)) }
+    ].filter(Boolean);
+    const dayRows = [
+      o.dNight && { label: "夜勤", get: (d) => sumDay(d, (v) => v === N.NIGHT, false) },
+      o.dEarly && { label: "早番", get: (d) => sumDay(d, (v) => v === N.EARLY || v === N.EARLY_DAY) },
+      o.dDay && { label: "日勤", get: (d) => sumDay(d, (v) => v === N.DAY) },
+      o.dLate && { label: "遅番", get: (d) => sumDay(d, (v) => v === N.LATE) },
+      o.dMorning && { label: "朝ピーク", get: (d) => sumDay(d, (v) => MORNING_PRESENT_SHIFTS.includes(v)) },
+      o.dEvening && { label: "夕方", get: (d) => sumDay(d, (v) => EVENING_PRESENT_SHIFTS.includes(v)) },
+      o.dTotal && { label: "出勤", get: (d) => sumDay(d, (v) => [N.DAY, N.EARLY, N.LATE, N.EARLY_DAY, N.DAY_LATE, N.TRAINING].includes(v)) }
+    ].filter(Boolean);
+    const leftCols = 1 + (o.pQual ? 1 : 0) + personCols.length;
+    const cs = { border: "1px solid #888", padding: "1px 0", textAlign: "center", fontSize: "9px", lineHeight: "1.3", overflow: "hidden" };
+    const bg = (v) => o.color ? PRINT_COLORS[v] || void 0 : void 0;
+    const now = /* @__PURE__ */ new Date();
+    const legend = [
+      `早：早番 ${shiftTimes.EARLY.start}〜${shiftTimes.EARLY.end}`,
+      `日：日勤 ${shiftTimes.DAY.start}〜${shiftTimes.DAY.end}`,
+      `遅：遅番 ${shiftTimes.LATE.start}〜${shiftTimes.LATE.end}`,
+      `早日：${shiftTimes.EARLY.start}〜${shiftTimes.DAY.end}`,
+      `日遅：${shiftTimes.DAY.start}〜${shiftTimes.LATE.end}`,
+      `当：夜勤 ${shiftTimes.NIGHT.start}〜翌${shiftTimes.NIGHT.end}`,
+      "明：夜勤明け",
+      "×：公休",
+      "有：有給休暇",
+      "リ：リフレッシュ休暇",
+      ...multiUnit ? ["→2など：その日は他のユニットへ応援"] : []
+    ].join("　");
+    return /* @__PURE__ */ React.createElement(
+      "div",
+      {
+        key: uid,
+        className: "print-sheet",
+        style: { breakAfter: isLast ? "auto" : "page", pageBreakAfter: isLast ? "auto" : "always", color: "#111", background: "#fff", fontFamily: '"Hiragino Sans","Yu Gothic","Meiryo",sans-serif' }
+      },
+      /* @__PURE__ */ React.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: "4px" } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: "14px", fontWeight: "bold" } }, o.title ? `${o.title}　` : "", "シフト表　", year, "年", month, "月", multiUnit ? `　${unitName(uid)}` : ""), /* @__PURE__ */ React.createElement("div", { style: { fontSize: "9px", color: "#555" } }, "印刷日 ", now.getFullYear(), "/", now.getMonth() + 1, "/", now.getDate())),
+      /* @__PURE__ */ React.createElement("table", { style: { borderCollapse: "collapse", width: "100%", tableLayout: "fixed" } }, /* @__PURE__ */ React.createElement("colgroup", null, /* @__PURE__ */ React.createElement("col", { style: { width: "64px" } }), o.pQual && /* @__PURE__ */ React.createElement("col", { style: { width: "46px" } }), personCols.map((pc) => /* @__PURE__ */ React.createElement("col", { key: pc.key, style: { width: pc.key === "hours" ? "30px" : "17px" } })), calendar.map((c) => /* @__PURE__ */ React.createElement("col", { key: c.date }))), /* @__PURE__ */ React.createElement("thead", null, /* @__PURE__ */ React.createElement("tr", null, /* @__PURE__ */ React.createElement("th", { style: { ...cs, textAlign: "left", paddingLeft: "2px" } }, "氏名"), o.pQual && /* @__PURE__ */ React.createElement("th", { style: cs }, "職種"), personCols.map((pc) => /* @__PURE__ */ React.createElement("th", { key: pc.key, style: cs }, pc.label)), calendar.map((c) => /* @__PURE__ */ React.createElement("th", { key: c.date, style: { ...cs, background: o.color ? c.day === 0 ? "#fee2e2" : c.day === 6 ? "#dbeafe" : "#f8fafc" : void 0, color: c.day === 0 ? "#b91c1c" : c.day === 6 ? "#1d4ed8" : void 0 } }, /* @__PURE__ */ React.createElement("div", null, c.date), /* @__PURE__ */ React.createElement("div", { style: { fontSize: "7px" } }, WEEKDAYS[c.day]))))), /* @__PURE__ */ React.createElement("tbody", null, home.map((st) => {
+        const cnt = calculateCounts(st.id);
+        return /* @__PURE__ */ React.createElement("tr", { key: st.id, style: { breakInside: "avoid" } }, /* @__PURE__ */ React.createElement("td", { style: { ...cs, textAlign: "left", paddingLeft: "2px", whiteSpace: "nowrap" } }, st.name), o.pQual && /* @__PURE__ */ React.createElement("td", { style: { ...cs, fontSize: "7px", whiteSpace: "nowrap" } }, st.qualification || ""), personCols.map((pc) => /* @__PURE__ */ React.createElement("td", { key: pc.key, style: cs }, pc.get(st, cnt))), calendar.map((c) => {
+          var _a2;
+          const v = valOf(st, c.date);
+          const h = (_a2 = helpAssign[st.id]) == null ? void 0 : _a2[c.date];
+          const away = !!h && h !== uid;
+          return /* @__PURE__ */ React.createElement("td", { key: c.date, style: { ...cs, background: away ? void 0 : bg(v), fontWeight: v === N.NIGHT ? "bold" : void 0 } }, v, away && /* @__PURE__ */ React.createElement("span", { style: { fontSize: "6px" } }, "→", unitShort(h)));
+        }));
+      }), guests.length > 0 && /* @__PURE__ */ React.createElement("tr", null, /* @__PURE__ */ React.createElement("td", { colSpan: leftCols + calendar.length, style: { ...cs, textAlign: "left", paddingLeft: "4px", fontWeight: "bold", background: o.color ? "#ffedd5" : void 0 } }, "他のユニットから応援")), guests.map((st) => /* @__PURE__ */ React.createElement("tr", { key: "g" + st.id, style: { breakInside: "avoid" } }, /* @__PURE__ */ React.createElement("td", { style: { ...cs, textAlign: "left", paddingLeft: "2px", whiteSpace: "nowrap" } }, st.name, /* @__PURE__ */ React.createElement("span", { style: { fontSize: "7px" } }, "（", unitName(unitOfStaff(st)), "）")), o.pQual && /* @__PURE__ */ React.createElement("td", { style: { ...cs, fontSize: "7px", whiteSpace: "nowrap" } }, st.qualification || ""), personCols.map((pc) => /* @__PURE__ */ React.createElement("td", { key: pc.key, style: cs })), calendar.map((c) => {
+        var _a2;
+        const on = ((_a2 = helpAssign[st.id]) == null ? void 0 : _a2[c.date]) === uid;
+        const v = on ? valOf(st, c.date) : "";
+        return /* @__PURE__ */ React.createElement("td", { key: c.date, style: { ...cs, background: on ? bg(v) : void 0 } }, v);
+      }))), dayRows.map((r, i) => /* @__PURE__ */ React.createElement("tr", { key: "d" + i, style: { breakInside: "avoid" } }, /* @__PURE__ */ React.createElement("td", { colSpan: leftCols, style: { ...cs, textAlign: "right", paddingRight: "4px", fontWeight: "bold", background: o.color ? "#f1f5f9" : void 0, ...i === 0 ? { borderTop: "2px solid #333" } : {} } }, r.label), calendar.map((c) => /* @__PURE__ */ React.createElement("td", { key: c.date, style: { ...cs, ...i === 0 ? { borderTop: "2px solid #333" } : {} } }, fmtNum(r.get(c.date)))))))),
+      o.legend && /* @__PURE__ */ React.createElement("div", { style: { fontSize: "8px", color: "#333", marginTop: "4px", lineHeight: "1.5" } }, legend)
+    );
+  };
   const renderUnitTabs = () => /* @__PURE__ */ React.createElement("div", { className: "flex items-end gap-1 px-2 pt-1.5 bg-slate-100 border-b border-slate-300 overflow-x-auto hide-scrollbar shrink-0" }, units.map((u) => {
     const on = u.id === activeUnit;
     const cnt = allStaffData.filter((st) => unitOfStaff(st) === u.id).length;
@@ -5187,7 +5319,7 @@ function App() {
       if (loadDemoData()) {
         setDemoRun(-1);
       }
-    }, className: "w-full h-12 mb-3 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 text-white font-bold shadow" }, "🧪 サンプルで自動作成を試す"), /* @__PURE__ */ React.createElement("div", { className: "text-[11px] font-bold text-gray-500 mb-1.5" }, "設定"), /* @__PURE__ */ React.createElement("div", { className: "grid grid-cols-4 gap-2 mb-3" }, item("👥", "職員設定", () => setIsStaffModalOpen(true)), item("📊", "人数設定", () => setIsDayTargetModalOpen(true)), item("⏰", "時間設定", () => setIsShiftTimeModalOpen(true)), item("🌙", "前月夜勤", () => setIsPrevNightModalOpen(true))), /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between bg-white border rounded-xl px-3 h-12 mb-3" }, /* @__PURE__ */ React.createElement("span", { className: "text-sm font-bold text-gray-700" }, "公休日数"), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2" }, /* @__PURE__ */ React.createElement("button", { onClick: () => setRequiredOffDays((n) => Math.max(0, n - 1)), className: "w-9 h-9 rounded-full border bg-gray-50 font-bold" }, "−"), /* @__PURE__ */ React.createElement("span", { className: "w-8 text-center font-bold text-lg" }, requiredOffDays), /* @__PURE__ */ React.createElement("button", { onClick: () => setRequiredOffDays((n) => n + 1), className: "w-9 h-9 rounded-full border bg-gray-50 font-bold" }, "＋"), /* @__PURE__ */ React.createElement("span", { className: "text-sm text-gray-500" }, "日"))), /* @__PURE__ */ React.createElement("div", { className: "text-[11px] font-bold text-gray-500 mb-1.5" }, "シフト表"), /* @__PURE__ */ React.createElement("div", { className: "grid grid-cols-4 gap-2 mb-3" }, item("🔒", "一括ロック", handleLockAll), item("🔓", "全解除", handleUnlockAll), item("💾", "CSV保存", downloadCSV), item("🗑️", "リセット", () => {
+    }, className: "w-full h-12 mb-3 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 text-white font-bold shadow" }, "🧪 サンプルで自動作成を試す"), /* @__PURE__ */ React.createElement("div", { className: "text-[11px] font-bold text-gray-500 mb-1.5" }, "設定"), /* @__PURE__ */ React.createElement("div", { className: "grid grid-cols-4 gap-2 mb-3" }, item("👥", "職員設定", () => setIsStaffModalOpen(true)), item("📊", "人数設定", () => setIsDayTargetModalOpen(true)), item("⏰", "時間設定", () => setIsShiftTimeModalOpen(true)), item("🌙", "前月夜勤", () => setIsPrevNightModalOpen(true))), /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between bg-white border rounded-xl px-3 h-12 mb-3" }, /* @__PURE__ */ React.createElement("span", { className: "text-sm font-bold text-gray-700" }, "公休日数"), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2" }, /* @__PURE__ */ React.createElement("button", { onClick: () => setRequiredOffDays((n) => Math.max(0, n - 1)), className: "w-9 h-9 rounded-full border bg-gray-50 font-bold" }, "−"), /* @__PURE__ */ React.createElement("span", { className: "w-8 text-center font-bold text-lg" }, requiredOffDays), /* @__PURE__ */ React.createElement("button", { onClick: () => setRequiredOffDays((n) => n + 1), className: "w-9 h-9 rounded-full border bg-gray-50 font-bold" }, "＋"), /* @__PURE__ */ React.createElement("span", { className: "text-sm text-gray-500" }, "日"))), /* @__PURE__ */ React.createElement("div", { className: "text-[11px] font-bold text-gray-500 mb-1.5" }, "シフト表"), /* @__PURE__ */ React.createElement("div", { className: "grid grid-cols-4 gap-2 mb-3" }, item("🔒", "一括ロック", handleLockAll), item("🔓", "全解除", handleUnlockAll), item("💾", "CSV保存", downloadCSV), item("🖨️", "印刷", () => setIsPrintOpen(true)), item("🗑️", "リセット", () => {
       if (confirm(multiUnit ? `${unitName(activeUnit)}のシフトを空にしますか？（他のユニットはそのままです）` : "この月のシフト表をリセットしますか？")) initializeSchedule("unit");
     }, "text-red-600")), /* @__PURE__ */ React.createElement("div", { className: "grid grid-cols-2 gap-2" }, /* @__PURE__ */ React.createElement("a", { href: "manual.html", target: "_blank", rel: "noopener", className: "h-11 rounded-xl border bg-white flex items-center justify-center text-sm font-bold text-gray-700" }, "📖 使い方"), /* @__PURE__ */ React.createElement("button", { onClick: () => {
       setMMenuOpen(false);
@@ -5287,7 +5419,7 @@ function App() {
     { key: "day", icon: "📆", label: "日別" },
     { key: "grid", icon: "🗓️", label: "一覧" }
   ].map((t) => /* @__PURE__ */ React.createElement("button", { key: t.key, onClick: () => setMView(t.key), className: `h-14 flex flex-col items-center justify-center gap-0.5 ${mView === t.key ? "text-blue-600" : "text-gray-500"}` }, /* @__PURE__ */ React.createElement("span", { className: "text-xl leading-none" }, t.icon), /* @__PURE__ */ React.createElement("span", { className: "text-[11px] font-bold" }, t.label))), /* @__PURE__ */ React.createElement("button", { onClick: () => setMMenuOpen(true), className: "relative h-14 flex flex-col items-center justify-center gap-0.5 text-gray-500" }, hasNewChangelog && /* @__PURE__ */ React.createElement("span", { className: "absolute top-2 right-[calc(50%-14px)] w-1.5 h-1.5 rounded-full bg-red-500" }), /* @__PURE__ */ React.createElement("span", { className: "text-xl leading-none" }, "≡"), /* @__PURE__ */ React.createElement("span", { className: "text-[11px] font-bold" }, "メニュー"))), mMenuOpen && renderMobileMenu(), showWelcome && renderWelcome(), demoRun !== 0 && /* @__PURE__ */ React.createElement("div", { className: "fixed inset-0 z-[99] bg-black/30 flex items-center justify-center p-6" }, /* @__PURE__ */ React.createElement("div", { className: "bg-white rounded-2xl p-5 w-full max-w-xs text-center shadow-2xl" }, /* @__PURE__ */ React.createElement("div", { className: "w-10 h-10 mx-auto mb-3 rounded-full border-4 border-blue-200 border-t-blue-600 animate-spin" }), /* @__PURE__ */ React.createElement("div", { className: "font-bold text-gray-800" }, "自動作成中…"), /* @__PURE__ */ React.createElement("div", { className: "text-sm text-gray-500 mt-1" }, demoRun > 0 && demoRun <= 4 ? `ステップ ${demoRun}/4：${DEMO_PHASES[demoRun]}` : "準備しています"), /* @__PURE__ */ React.createElement("div", { className: "flex gap-1 mt-3" }, [1, 2, 3, 4].map((i) => /* @__PURE__ */ React.createElement("div", { key: i, className: `flex-1 h-1.5 rounded-full ${demoRun > i || demoRun === 5 ? "bg-blue-600" : demoRun === i ? "bg-blue-300" : "bg-gray-200"}` }))))));
-  return /* @__PURE__ */ React.createElement("div", { className: "flex flex-col h-[100dvh]" }, !mobileUI ? /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("header", { className: "bg-slate-800 text-white p-2 sm:p-3 shadow-md z-30 flex justify-between items-center shrink-0" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-1 sm:gap-2" }, /* @__PURE__ */ React.createElement("span", { className: "text-lg sm:text-xl" }, "📅"), /* @__PURE__ */ React.createElement("h1", { className: "font-bold text-sm sm:text-lg hidden sm:block" }, "シフト作成アプリ"), versionBadge("hidden sm:inline-block text-xs ml-0.5"), /* @__PURE__ */ React.createElement("h1", { className: "font-bold text-xs sm:hidden" }, "シフト作成"), /* @__PURE__ */ React.createElement("a", { href: "manual.html", target: "_blank", rel: "noopener", title: "取扱説明書を別のタブで開く", className: "ml-1 sm:ml-2 text-[10px] sm:text-sm bg-amber-400 text-slate-900 font-bold px-1.5 sm:px-2.5 py-0.5 sm:py-1 rounded hover:bg-amber-300 whitespace-nowrap" }, "📖 使い方"), /* @__PURE__ */ React.createElement("button", { onClick: () => setIsContactOpen(true), title: "問い合わせ先", className: "hidden sm:inline-block ml-1 text-sm bg-sky-200 text-slate-900 font-bold px-2.5 py-1 rounded hover:bg-sky-100 whitespace-nowrap" }, "✉️ 問い合わせ先")), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-1 sm:gap-2 bg-slate-700 rounded-lg px-1 sm:px-2 py-1" }, /* @__PURE__ */ React.createElement("button", { onClick: () => setMonth((m) => m - 1), className: "p-1 hover:bg-slate-600 rounded text-slate-300 leading-none" }, "◀"), /* @__PURE__ */ React.createElement("span", { className: "font-mono text-sm sm:text-lg font-bold w-12 sm:w-16 text-center" }, year, ".", month), /* @__PURE__ */ React.createElement("button", { onClick: () => setMonth((m) => m + 1), className: "p-1 hover:bg-slate-600 rounded text-slate-300 leading-none" }, "▶")), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-1 bg-slate-700 rounded-lg px-1 sm:px-2 py-1 ml-1 sm:ml-2 text-xs sm:text-sm" }, /* @__PURE__ */ React.createElement("span", { className: "hidden sm:inline" }, "公休:"), /* @__PURE__ */ React.createElement("span", { className: "sm:hidden" }, "休:"), /* @__PURE__ */ React.createElement(
+  return /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { className: "flex flex-col h-[100dvh] print:hidden" }, !mobileUI ? /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("header", { className: "bg-slate-800 text-white p-2 sm:p-3 shadow-md z-30 flex justify-between items-center shrink-0" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-1 sm:gap-2" }, /* @__PURE__ */ React.createElement("span", { className: "text-lg sm:text-xl" }, "📅"), /* @__PURE__ */ React.createElement("h1", { className: "font-bold text-sm sm:text-lg hidden sm:block" }, "シフト作成アプリ"), versionBadge("hidden sm:inline-block text-xs ml-0.5"), /* @__PURE__ */ React.createElement("h1", { className: "font-bold text-xs sm:hidden" }, "シフト作成"), /* @__PURE__ */ React.createElement("a", { href: "manual.html", target: "_blank", rel: "noopener", title: "取扱説明書を別のタブで開く", className: "ml-1 sm:ml-2 text-[10px] sm:text-sm bg-amber-400 text-slate-900 font-bold px-1.5 sm:px-2.5 py-0.5 sm:py-1 rounded hover:bg-amber-300 whitespace-nowrap" }, "📖 使い方"), /* @__PURE__ */ React.createElement("button", { onClick: () => setIsContactOpen(true), title: "問い合わせ先", className: "hidden sm:inline-block ml-1 text-sm bg-sky-200 text-slate-900 font-bold px-2.5 py-1 rounded hover:bg-sky-100 whitespace-nowrap" }, "✉️ 問い合わせ先")), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-1 sm:gap-2 bg-slate-700 rounded-lg px-1 sm:px-2 py-1" }, /* @__PURE__ */ React.createElement("button", { onClick: () => setMonth((m) => m - 1), className: "p-1 hover:bg-slate-600 rounded text-slate-300 leading-none" }, "◀"), /* @__PURE__ */ React.createElement("span", { className: "font-mono text-sm sm:text-lg font-bold w-12 sm:w-16 text-center" }, year, ".", month), /* @__PURE__ */ React.createElement("button", { onClick: () => setMonth((m) => m + 1), className: "p-1 hover:bg-slate-600 rounded text-slate-300 leading-none" }, "▶")), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-1 bg-slate-700 rounded-lg px-1 sm:px-2 py-1 ml-1 sm:ml-2 text-xs sm:text-sm" }, /* @__PURE__ */ React.createElement("span", { className: "hidden sm:inline" }, "公休:"), /* @__PURE__ */ React.createElement("span", { className: "sm:hidden" }, "休:"), /* @__PURE__ */ React.createElement(
     "input",
     {
       type: "number",
@@ -5318,7 +5450,7 @@ function App() {
   }, className: "flex items-center gap-1 px-3 py-1.5 sm:px-4 sm:py-2 bg-blue-600 text-white rounded hover:bg-blue-700 shadow-sm font-bold whitespace-nowrap text-xs sm:text-sm" }, "次へ ▶")), step === 4 && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("button", { onClick: () => distributeEarlyLate(false), className: "flex items-center gap-1 px-2 py-1.5 sm:px-3 sm:py-2 bg-purple-600 text-white rounded hover:bg-purple-700 shadow-sm font-bold whitespace-nowrap text-xs sm:text-sm" }, "⚖️ 早遅"), /* @__PURE__ */ React.createElement("button", { onClick: () => {
     setStep(5);
     setMessage({ text: "Step5: 早番・遅番の配置を再実行（均し）します。", type: "info" });
-  }, className: "flex items-center gap-1 px-3 py-1.5 sm:px-4 sm:py-2 bg-blue-600 text-white rounded hover:bg-blue-700 shadow-sm font-bold whitespace-nowrap text-xs sm:text-sm" }, "次へ ▶")), step === 5 && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("button", { onClick: () => distributeEarlyLate(true), className: "flex items-center gap-1 px-2 py-1.5 sm:px-3 sm:py-2 bg-indigo-600 text-white rounded hover:bg-indigo-700 shadow-sm font-bold whitespace-nowrap text-xs sm:text-sm" }, "🔄 再早遅"))), /* @__PURE__ */ React.createElement("div", { className: "flex gap-1.5 sm:gap-2 items-center flex-nowrap shrink-0 ml-auto justify-end sm:flex-wrap sm:shrink sm:min-w-0" }, /* @__PURE__ */ React.createElement("button", { onClick: handleLockAll, className: "flex items-center gap-1 px-2 py-1.5 sm:px-3 sm:py-2 bg-slate-600 text-white rounded hover:bg-slate-700 shadow-sm font-bold whitespace-nowrap text-xs sm:text-sm", title: "入力済みのシフトをすべてロック" }, "🔒 ", /* @__PURE__ */ React.createElement("span", { className: "hidden sm:inline" }, "一括ロック")), /* @__PURE__ */ React.createElement("button", { onClick: handleUnlockAll, className: "flex items-center gap-1 px-2 py-1.5 sm:px-3 sm:py-2 bg-slate-200 text-slate-700 rounded hover:bg-slate-300 shadow-sm font-bold whitespace-nowrap text-xs sm:text-sm", title: "すべてのロックを解除" }, "🔓 ", /* @__PURE__ */ React.createElement("span", { className: "hidden sm:inline" }, "全解除")), /* @__PURE__ */ React.createElement("button", { onClick: downloadCSV, className: "flex items-center gap-1 px-2 py-1.5 sm:px-3 sm:py-2 bg-gray-800 text-white rounded hover:bg-gray-900 shadow-sm font-bold whitespace-nowrap text-xs sm:text-sm" }, "💾 ", /* @__PURE__ */ React.createElement("span", { className: "hidden sm:inline" }, "CSV")), /* @__PURE__ */ React.createElement("button", { onClick: undo, disabled: history.length === 0, className: `px-2 py-1.5 sm:px-3 sm:py-2 border rounded font-bold transition-colors text-xs sm:text-sm ${history.length === 0 ? "bg-gray-100 text-gray-400 border-transparent cursor-not-allowed" : "bg-white text-gray-700 border-gray-300 hover:bg-gray-50 shadow-sm"}` }, "↩️ 戻る"), step > 0 && /* @__PURE__ */ React.createElement("button", { onClick: () => setStep(step - 1), className: "px-2 py-1.5 sm:px-3 sm:py-2 bg-white border border-gray-300 text-gray-500 rounded hover:bg-gray-50 font-bold shadow-sm text-xs sm:text-sm" }, "◀"), /* @__PURE__ */ React.createElement("button", { onClick: () => {
+  }, className: "flex items-center gap-1 px-3 py-1.5 sm:px-4 sm:py-2 bg-blue-600 text-white rounded hover:bg-blue-700 shadow-sm font-bold whitespace-nowrap text-xs sm:text-sm" }, "次へ ▶")), step === 5 && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("button", { onClick: () => distributeEarlyLate(true), className: "flex items-center gap-1 px-2 py-1.5 sm:px-3 sm:py-2 bg-indigo-600 text-white rounded hover:bg-indigo-700 shadow-sm font-bold whitespace-nowrap text-xs sm:text-sm" }, "🔄 再早遅"))), /* @__PURE__ */ React.createElement("div", { className: "flex gap-1.5 sm:gap-2 items-center flex-nowrap shrink-0 ml-auto justify-end sm:flex-wrap sm:shrink sm:min-w-0" }, /* @__PURE__ */ React.createElement("button", { onClick: handleLockAll, className: "flex items-center gap-1 px-2 py-1.5 sm:px-3 sm:py-2 bg-slate-600 text-white rounded hover:bg-slate-700 shadow-sm font-bold whitespace-nowrap text-xs sm:text-sm", title: "入力済みのシフトをすべてロック" }, "🔒 ", /* @__PURE__ */ React.createElement("span", { className: "hidden sm:inline" }, "一括ロック")), /* @__PURE__ */ React.createElement("button", { onClick: handleUnlockAll, className: "flex items-center gap-1 px-2 py-1.5 sm:px-3 sm:py-2 bg-slate-200 text-slate-700 rounded hover:bg-slate-300 shadow-sm font-bold whitespace-nowrap text-xs sm:text-sm", title: "すべてのロックを解除" }, "🔓 ", /* @__PURE__ */ React.createElement("span", { className: "hidden sm:inline" }, "全解除")), /* @__PURE__ */ React.createElement("button", { onClick: downloadCSV, className: "flex items-center gap-1 px-2 py-1.5 sm:px-3 sm:py-2 bg-gray-800 text-white rounded hover:bg-gray-900 shadow-sm font-bold whitespace-nowrap text-xs sm:text-sm" }, "💾 ", /* @__PURE__ */ React.createElement("span", { className: "hidden sm:inline" }, "CSV")), /* @__PURE__ */ React.createElement("button", { onClick: () => setIsPrintOpen(true), className: "flex items-center gap-1 px-2 py-1.5 sm:px-3 sm:py-2 bg-white border border-gray-400 text-gray-800 rounded hover:bg-gray-50 shadow-sm font-bold whitespace-nowrap text-xs sm:text-sm", title: "シフト表を印刷（含める情報を選べます）" }, "🖨️ ", /* @__PURE__ */ React.createElement("span", { className: "hidden sm:inline" }, "印刷")), /* @__PURE__ */ React.createElement("button", { onClick: undo, disabled: history.length === 0, className: `px-2 py-1.5 sm:px-3 sm:py-2 border rounded font-bold transition-colors text-xs sm:text-sm ${history.length === 0 ? "bg-gray-100 text-gray-400 border-transparent cursor-not-allowed" : "bg-white text-gray-700 border-gray-300 hover:bg-gray-50 shadow-sm"}` }, "↩️ 戻る"), step > 0 && /* @__PURE__ */ React.createElement("button", { onClick: () => setStep(step - 1), className: "px-2 py-1.5 sm:px-3 sm:py-2 bg-white border border-gray-300 text-gray-500 rounded hover:bg-gray-50 font-bold shadow-sm text-xs sm:text-sm" }, "◀"), /* @__PURE__ */ React.createElement("button", { onClick: () => {
     if (confirm(multiUnit ? `${unitName(activeUnit)}のシフトを空にしますか？（他のユニットはそのままです）` : "リセットしますか？")) {
       initializeSchedule("unit");
     }
@@ -6151,7 +6283,19 @@ function App() {
       className: "px-3 py-1.5 bg-rose-50 border border-rose-200 text-rose-700 rounded hover:bg-rose-100 text-sm font-bold"
     },
     "🙋📂 希望休を読み込む"
-  ))), /* @__PURE__ */ React.createElement("div", { className: "flex justify-between items-center" }, /* @__PURE__ */ React.createElement("a", { href: "manual.html#requests", target: "_blank", rel: "noopener", className: "text-xs text-blue-700 underline" }, "詳しい手順（取扱説明書）"), /* @__PURE__ */ React.createElement("button", { onClick: () => setIsFormLinkOpen(false), className: "bg-slate-600 text-white px-4 py-2 rounded font-bold text-sm" }, "閉じる")))), !mobileUI && demoRun !== 0 && /* @__PURE__ */ React.createElement("div", { className: "fixed inset-0 z-[99] bg-black/30 flex items-center justify-center p-6" }, /* @__PURE__ */ React.createElement("div", { className: "bg-white rounded-2xl p-5 w-full max-w-xs text-center shadow-2xl" }, /* @__PURE__ */ React.createElement("div", { className: "w-10 h-10 mx-auto mb-3 rounded-full border-4 border-blue-200 border-t-blue-600 animate-spin" }), /* @__PURE__ */ React.createElement("div", { className: "font-bold text-gray-800" }, "自動作成中…", multiUnit ? `（${unitName(activeUnit)}）` : ""), /* @__PURE__ */ React.createElement("div", { className: "text-sm text-gray-500 mt-1" }, demoRun > 0 && demoRun <= 4 ? `ステップ ${demoRun}/4：${DEMO_PHASES[demoRun]}` : "準備しています"), /* @__PURE__ */ React.createElement("div", { className: "flex gap-1 mt-3" }, [1, 2, 3, 4].map((i) => /* @__PURE__ */ React.createElement("div", { key: i, className: `flex-1 h-1.5 rounded-full ${demoRun > i || demoRun === 5 ? "bg-blue-600" : demoRun === i ? "bg-blue-300" : "bg-gray-200"}` }))))), isContactOpen && renderContact(), isChangelogOpen && renderChangelog());
+  ))), /* @__PURE__ */ React.createElement("div", { className: "flex justify-between items-center" }, /* @__PURE__ */ React.createElement("a", { href: "manual.html#requests", target: "_blank", rel: "noopener", className: "text-xs text-blue-700 underline" }, "詳しい手順（取扱説明書）"), /* @__PURE__ */ React.createElement("button", { onClick: () => setIsFormLinkOpen(false), className: "bg-slate-600 text-white px-4 py-2 rounded font-bold text-sm" }, "閉じる")))), !mobileUI && demoRun !== 0 && /* @__PURE__ */ React.createElement("div", { className: "fixed inset-0 z-[99] bg-black/30 flex items-center justify-center p-6" }, /* @__PURE__ */ React.createElement("div", { className: "bg-white rounded-2xl p-5 w-full max-w-xs text-center shadow-2xl" }, /* @__PURE__ */ React.createElement("div", { className: "w-10 h-10 mx-auto mb-3 rounded-full border-4 border-blue-200 border-t-blue-600 animate-spin" }), /* @__PURE__ */ React.createElement("div", { className: "font-bold text-gray-800" }, "自動作成中…", multiUnit ? `（${unitName(activeUnit)}）` : ""), /* @__PURE__ */ React.createElement("div", { className: "text-sm text-gray-500 mt-1" }, demoRun > 0 && demoRun <= 4 ? `ステップ ${demoRun}/4：${DEMO_PHASES[demoRun]}` : "準備しています"), /* @__PURE__ */ React.createElement("div", { className: "flex gap-1 mt-3" }, [1, 2, 3, 4].map((i) => /* @__PURE__ */ React.createElement("div", { key: i, className: `flex-1 h-1.5 rounded-full ${demoRun > i || demoRun === 5 ? "bg-blue-600" : demoRun === i ? "bg-blue-300" : "bg-gray-200"}` }))))), isContactOpen && renderContact(), isChangelogOpen && renderChangelog(), isPrintOpen && (() => {
+    const chk = (key, label) => /* @__PURE__ */ React.createElement("label", { key, className: "flex items-center gap-2 cursor-pointer py-0.5" }, /* @__PURE__ */ React.createElement("input", { type: "checkbox", className: "w-4 h-4 accent-blue-600", checked: !!printOpts[key], onChange: (e) => setPrintOpts({ ...printOpts, [key]: e.target.checked }) }), /* @__PURE__ */ React.createElement("span", null, label));
+    return /* @__PURE__ */ React.createElement("div", { className: "fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50", onClick: () => setIsPrintOpen(false) }, /* @__PURE__ */ React.createElement("div", { className: "bg-white rounded-lg p-4 w-[96vw] max-w-6xl shadow-xl max-h-[94dvh] flex flex-col", onClick: (e) => e.stopPropagation() }, /* @__PURE__ */ React.createElement("div", { className: "flex justify-between items-center mb-2" }, /* @__PURE__ */ React.createElement("h3", { className: "font-bold text-lg" }, "🖨️ 印刷"), /* @__PURE__ */ React.createElement("button", { onClick: () => setIsPrintOpen(false), className: "text-gray-400 hover:text-gray-600 font-bold text-xl leading-none" }, "×")), /* @__PURE__ */ React.createElement("div", { className: "flex flex-col md:flex-row gap-3 min-h-0 flex-1 overflow-y-auto md:overflow-hidden" }, /* @__PURE__ */ React.createElement("div", { className: "md:w-60 shrink-0 md:overflow-y-auto text-sm space-y-3 pr-1" }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { className: "font-bold text-gray-700 mb-1" }, "表題"), /* @__PURE__ */ React.createElement(
+      "input",
+      {
+        type: "text",
+        value: printOpts.title,
+        onChange: (e) => setPrintOpts({ ...printOpts, title: e.target.value }),
+        placeholder: "例：〇〇ホーム（空欄でもよい）",
+        className: "border rounded px-2 py-1 w-full text-sm"
+      }
+    )), multiUnit && /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { className: "font-bold text-gray-700 mb-1" }, "印刷するユニット"), /* @__PURE__ */ React.createElement("label", { className: "flex items-center gap-2 cursor-pointer py-0.5" }, /* @__PURE__ */ React.createElement("input", { type: "radio", name: "printScope", checked: printOpts.scope !== "all", onChange: () => setPrintOpts({ ...printOpts, scope: "current" }) }), "表示中のユニット（", unitName(activeUnit), "）"), /* @__PURE__ */ React.createElement("label", { className: "flex items-center gap-2 cursor-pointer py-0.5" }, /* @__PURE__ */ React.createElement("input", { type: "radio", name: "printScope", checked: printOpts.scope === "all", onChange: () => setPrintOpts({ ...printOpts, scope: "all" }) }), "全ユニット（ユニットごとに改ページ）")), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { className: "font-bold text-gray-700 mb-1" }, "職員ごとの集計（表の左）"), chk("pNight", "夜勤の回数"), chk("pOff", "公休の数"), chk("pEarly", "早番の回数"), chk("pDay", "日勤の回数"), chk("pLate", "遅番の回数"), chk("pHours", "月の勤務時間"), chk("pQual", "職種")), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { className: "font-bold text-gray-700 mb-1" }, "日ごとの人数（表の下）"), chk("dNight", "夜勤"), chk("dEarly", "早番（早日を含む）"), chk("dDay", "日勤"), chk("dLate", "遅番"), chk("dMorning", "朝ピーク"), chk("dEvening", "夕方（遅番＋日遅）"), chk("dTotal", "出勤の合計")), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { className: "font-bold text-gray-700 mb-1" }, "その他"), chk("legend", "勤務記号の説明"), chk("color", "カラーで印刷"), /* @__PURE__ */ React.createElement("label", { className: "flex items-center gap-2 py-0.5" }, /* @__PURE__ */ React.createElement("span", null, "用紙"), /* @__PURE__ */ React.createElement("select", { value: printOpts.paper, onChange: (e) => setPrintOpts({ ...printOpts, paper: e.target.value }), className: "border rounded px-1 py-0.5 text-sm" }, /* @__PURE__ */ React.createElement("option", { value: "A4L" }, "A4 横"), /* @__PURE__ */ React.createElement("option", { value: "A4P" }, "A4 縦"), /* @__PURE__ */ React.createElement("option", { value: "A3L" }, "A3 横")))), /* @__PURE__ */ React.createElement("button", { onClick: () => setPrintOpts({ ...PRINT_DEFAULTS, title: printOpts.title }), className: "text-xs text-gray-500 underline" }, "選択を初期の状態に戻す")), /* @__PURE__ */ React.createElement("div", { className: "flex-1 min-w-0 min-h-[240px] border rounded bg-gray-100 overflow-auto p-2" }, /* @__PURE__ */ React.createElement("div", { className: "text-[10px] text-gray-500 mb-1" }, "プレビュー（実際の大きさは用紙に合わせて変わります）"), /* @__PURE__ */ React.createElement("div", { className: "bg-white shadow p-3 space-y-6", style: { zoom: 0.75 } }, printUnits.map((u, i) => renderPrintSheet(u, i === printUnits.length - 1))))), /* @__PURE__ */ React.createElement("div", { className: "flex flex-wrap justify-between items-center gap-2 mt-3 border-t pt-3" }, /* @__PURE__ */ React.createElement("p", { className: "text-[10px] text-gray-500 leading-snug" }, "印刷の画面で、送信先・用紙の向きを確認してください。色が出ないときは「背景のグラフィック」をオンにします。"), /* @__PURE__ */ React.createElement("div", { className: "flex gap-2" }, /* @__PURE__ */ React.createElement("button", { onClick: () => setIsPrintOpen(false), className: "bg-gray-200 text-gray-700 px-3 py-2 rounded font-bold text-sm hover:bg-gray-300" }, "閉じる"), /* @__PURE__ */ React.createElement("button", { onClick: () => window.print(), className: "bg-blue-600 text-white px-4 py-2 rounded font-bold text-sm hover:bg-blue-700 shadow-sm" }, "🖨️ 印刷する")))));
+  })()), /* @__PURE__ */ React.createElement("div", { className: "hidden print:block" }, isPrintOpen && printUnits.map((u, i) => renderPrintSheet(u, i === printUnits.length - 1))), isPrintOpen && /* @__PURE__ */ React.createElement("style", null, `@media print { @page { size: ${PRINT_PAPERS[printOpts.paper] || "A4 landscape"}; margin: 7mm; } }`));
 }
 const root = ReactDOM.createRoot(document.getElementById("root"));
 root.render(/* @__PURE__ */ React.createElement(App, null));
