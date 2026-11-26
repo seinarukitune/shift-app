@@ -142,7 +142,8 @@ const CHANGELOG = [
     "人数設定（日勤・朝ピーク・早番・夕方・夜勤人数など）は、ユニットごとに分かれています。",
     "職員設定で「〇〇へ応援可」にした職員は、「🤝 応援」で、他のユニットの人が足りない日に入ります（夜勤・日勤・早番・遅番のすべて）。人手不足で連勤が長くなった人や公休が足りない人の休みも、応援を入れて作ります。マスを押して、その日に働くユニットを手で選ぶこともできます。",
     "応援で来た日はオレンジの枠と「応」の印、応援に出る日は点線の枠と行き先（例：→2）で表示します。表の下の「応援」の行に、来た人数（＋）と出た人数（−）を出します。",
-    "CSVの書き出しは、全ユニットの職員を1つのファイルに出します（「ユニット」列あり。応援の日は「日(ユニット2)」のように書きます）。"
+    "CSVの書き出しは、全ユニットの職員を1つのファイルに出します（「ユニット」列あり。応援の日は「日(ユニット2)」のように書きます）。",
+    "日勤必要数を0にした曜日は、日勤を置かずに早番・遅番だけで組むようにしました（グループホームなどの「早番1・遅番1」の体制）。その曜日の朝ピーク必要数は、早番必要数として扱います。"
   ] },
   { version: "v.22.5", date: "2026-11-20", items: [
     "職員数が多い施設で、日によって日勤の人数が大きくばらつく問題を直しました。必要数に対する余裕が日ごとにそろうように公休を配置します。",
@@ -886,7 +887,13 @@ function App() {
     return specificDayTargets[date] !== void 0 ? specificDayTargets[date] : dayTargets[dayOfWeek];
   };
   const getMorningTargetForDay = (date, dayOfWeek) => {
-    return specificMorningTargets[date] !== void 0 ? specificMorningTargets[date] : morningTargets[dayOfWeek];
+    const base = specificMorningTargets[date] !== void 0 ? specificMorningTargets[date] : morningTargets[dayOfWeek];
+    if (getTargetForDay(date, dayOfWeek) === 0) return Math.min(base, getEarlyTargetForDay(dayOfWeek));
+    return base;
+  };
+  const getDayWorkTarget = (date, dayOfWeek) => {
+    const t = getTargetForDay(date, dayOfWeek);
+    return t === 0 ? getEarlyTargetForDay(dayOfWeek) + eveningTarget : t;
   };
   const getEarlyTargetForDay = (dayOfWeek) => {
     const v = earlyTargets[dayOfWeek];
@@ -3037,7 +3044,7 @@ function App() {
               score -= 5e4;
             }
             {
-              const dayGoal = Math.max(getTargetForDay(d, dayInfo.day), dayFloorTarget);
+              const dayGoal = Math.max(getDayWorkTarget(d, dayInfo.day), dayFloorTarget);
               score += (remainAfterOff - dayGoal) * 6e3;
             }
             score += Math.random();
@@ -3119,7 +3126,7 @@ function App() {
         const countD1 = getDayShiftCount(d1, newSchedule);
         const countD2 = getDayShiftCount(d2, newSchedule);
         const morningD1 = getMorningTargetForDay(d1, calendar[d1 - 1].day);
-        const targetD2 = getTargetForDay(d2, calendar[d2 - 1].day);
+        const targetD2 = getDayWorkTarget(d2, calendar[d2 - 1].day);
         if (cons > getMaxRun(staff) || isNightEndDay || countD1 < morningD1 - 1 || countD2 > targetD2 + 2 || isoAfter > isoBefore || !runOkM) {
           newSchedule[staff.id][d1] = SHIFT_TYPES.DAY;
           newSchedule[staff.id][d2] = SHIFT_TYPES.OFF;
@@ -3199,8 +3206,8 @@ function App() {
                   const dayCountTarget = getDayShiftCount(d, newSchedule);
                   const targetDayInfo = calendar[fd - 1];
                   const sourceDayInfo = calendar[d - 1];
-                  const destTarget = getTargetForDay(fd, targetDayInfo.day);
-                  const sourceTarget = getTargetForDay(d, sourceDayInfo.day);
+                  const destTarget = getDayWorkTarget(fd, targetDayInfo.day);
+                  const sourceTarget = getDayWorkTarget(d, sourceDayInfo.day);
                   if (dayCountTarget <= 3) continue;
                   if (dayCountFree >= Math.max(8, destTarget + 2)) continue;
                   if (dayCountTarget <= sourceTarget) continue;
@@ -3238,7 +3245,7 @@ function App() {
       }
       const richDays = [];
       for (let d = 1; d <= daysInMonth; d++) {
-        const t = getTargetForDay(d, calendar[d - 1].day);
+        const t = getDayWorkTarget(d, calendar[d - 1].day);
         if (getDayShiftCount(d, newSchedule) > t) richDays.push(d);
       }
       if (richDays.length > 0) {
@@ -3255,7 +3262,7 @@ function App() {
               }
               const cnt = getDayShiftCount(fd, newSchedule);
               const dayInfo = calendar[fd - 1];
-              const destTarget = getTargetForDay(fd, dayInfo.day);
+              const destTarget = getDayWorkTarget(fd, dayInfo.day);
               let moveScore = 0;
               moveScore += (Math.max(8, destTarget + 2) - cnt) * 10;
               if (cnt < destTarget) moveScore += 40;
@@ -3321,7 +3328,7 @@ function App() {
               if (isCellLocked(staff.id, t, newSchedule)) continue;
               if (isNg(staff.id, t, SHIFT_TYPES.OFF)) continue;
               const tInfo = calendar[t - 1];
-              if (getDayShiftCount(t, newSchedule) - w < getTargetForDay(t, tInfo.day) - 1) continue;
+              if (getDayShiftCount(t, newSchedule) - w < getDayWorkTarget(t, tInfo.day) - 1) continue;
               if (getMorningSupply(t, newSchedule) - w < getMorningTargetForDay(t, tInfo.day) - 1) continue;
               newSchedule[staff.id][d] = SHIFT_TYPES.DAY;
               newSchedule[staff.id][t] = SHIFT_TYPES.OFF;
@@ -3355,7 +3362,7 @@ function App() {
     };
     consolidateOffs();
     const balanceDayCounts = () => {
-      const slack = (d) => getDayShiftCount(d, newSchedule) - getTargetForDay(d, calendar[d - 1].day);
+      const slack = (d) => getDayShiftCount(d, newSchedule) - getDayWorkTarget(d, calendar[d - 1].day);
       let moved = 0;
       for (let iter = 0; iter < daysInMonth * 30; iter++) {
         const order = Array.from({ length: daysInMonth }, (_, i) => i + 1).sort((a, b) => slack(b) - slack(a));
@@ -3461,6 +3468,207 @@ function App() {
     } else {
       setMessage({ text: "Step 3: 展開・公休・日勤・均しを一括で完了しました。次は「早遅」の配置です。", type: "success" });
     }
+  };
+  const finishZeroDayShifts = (sched) => {
+    const zero = calendar.map((c) => getTargetForDay(c.date, c.day) === 0);
+    if (!zero.some(Boolean)) return null;
+    const N = SHIFT_TYPES;
+    const DT = [N.DAY, N.EARLY, N.LATE, N.EARLY_DAY, N.DAY_LATE];
+    const isEarly = (v) => v === N.EARLY || v === N.EARLY_DAY;
+    const isEve = (v) => v === N.LATE || v === N.DAY_LATE;
+    const isOff = (v) => v === N.OFF || v === N.PAID || v === N.REFRESH;
+    const E = (d) => getEarlyTargetForDay(calendar[d - 1].day);
+    const V = eveningTarget;
+    const dayCost = (d, e, v, dn) => Math.max(0, E(d) - e) * 100 + Math.max(0, e - E(d)) * 10 + Math.max(0, V - v) * 100 + Math.max(0, v - V) * 10 + dn * 1e3;
+    const othersCount = (exceptId) => {
+      const c = {};
+      for (let d = 1; d <= daysInMonth; d++) {
+        if (!zero[d - 1]) continue;
+        let e = 0, v = 0, dn = 0;
+        staffData.forEach((st) => {
+          var _a2;
+          if (st.id === exceptId) return;
+          const x = (_a2 = sched[st.id]) == null ? void 0 : _a2[d];
+          if (isEarly(x)) e += headWeight(st);
+          if (isEve(x)) v += headWeight(st);
+          if (x === N.DAY && st.group !== "C") dn++;
+        });
+        c[d] = { e, v, dn };
+      }
+      return c;
+    };
+    const costRow = (st, row, oc) => {
+      const w = headWeight(st);
+      let total = 0;
+      for (let d = 1; d <= daysInMonth; d++) {
+        if (!zero[d - 1]) continue;
+        const x = row[d];
+        total += dayCost(d, oc[d].e + (isEarly(x) ? w : 0), oc[d].v + (isEve(x) ? w : 0), oc[d].dn + (x === N.DAY ? 1 : 0));
+      }
+      return total;
+    };
+    const maxRunOf = (row) => {
+      let mx = 0, run = 0;
+      for (let d = 1; d <= daysInMonth; d++) {
+        if (row[d] && isWorkDay(row[d])) {
+          run++;
+          if (run > mx) mx = run;
+        } else run = 0;
+      }
+      return mx;
+    };
+    const maxOffRunOf = (row) => {
+      let mx = 0, run = 0;
+      for (let d = 1; d <= daysInMonth; d++) {
+        if (isOff(row[d])) {
+          run++;
+          if (run > mx) mx = run;
+        } else run = 0;
+      }
+      return mx;
+    };
+    const relabel = (st, row, oc) => {
+      const w = headWeight(st);
+      let d = 1, ok = true;
+      while (d <= daysInMonth) {
+        if (!DT.includes(row[d])) {
+          d++;
+          continue;
+        }
+        let e = d;
+        while (e + 1 <= daysInMonth && DT.includes(row[e + 1])) e++;
+        const cells = [];
+        for (let k = d; k <= e; k++) cells.push({ k, cur: row[k], free: zero[k - 1] && !isCellLocked(st.id, k, sched) });
+        const nFree = cells.filter((x) => x.free).length;
+        const prevOut = d - 1 >= 1 ? row[d - 1] : getShiftSafe(st.id, d - 1, sched);
+        const nextOut = e + 1 <= daysInMonth ? row[e + 1] : N.NONE;
+        if (nFree > 0 && nFree <= 8) {
+          const cw = (k, lab2) => dayCost(k, oc[k].e + (isEarly(lab2) ? w : 0), oc[k].v + (isEve(lab2) ? w : 0), oc[k].dn + (lab2 === N.DAY ? 1 : 0));
+          const lab = cells.map((x) => x.cur);
+          let best = null;
+          const rec = (i, prev, cost) => {
+            if (best && cost >= best.cost) return;
+            if (i === cells.length) {
+              if (restOk(prev, nextOut)) best = { cost, labels: [...lab] };
+              return;
+            }
+            const x = cells[i];
+            if (!x.free) {
+              if (!restOk(prev, x.cur)) return;
+              lab[i] = x.cur;
+              rec(i + 1, x.cur, cost);
+              return;
+            }
+            for (const o of [N.EARLY, N.LATE, N.DAY]) {
+              if (o !== x.cur && isNg(st.id, x.k, o)) continue;
+              if (!restOk(prev, o)) continue;
+              lab[i] = o;
+              rec(i + 1, o, cost + cw(x.k, o));
+            }
+            lab[i] = x.cur;
+          };
+          rec(0, prevOut, 0);
+          if (!best) ok = false;
+          else cells.forEach((x, i) => {
+            if (x.free) row[x.k] = best.labels[i];
+          });
+        } else {
+          let prev = prevOut;
+          cells.forEach((x) => {
+            if (!restOk(prev, x.cur)) ok = false;
+            prev = x.cur;
+          });
+          if (!restOk(prev, nextOut)) ok = false;
+        }
+        d = e + 1;
+      }
+      return ok;
+    };
+    const before = {};
+    staffData.forEach((st) => {
+      before[st.id] = { ...sched[st.id] || {} };
+    });
+    const eligible = staffData.filter((st) => !st._guest && st.group !== "C" && sched[st.id]);
+    const workers = (d) => staffData.reduce((a, st) => {
+      var _a2;
+      return a + (DT.includes((_a2 = sched[st.id]) == null ? void 0 : _a2[d]) ? headWeight(st) : 0);
+    }, 0);
+    for (let pass = 0; pass < 10; pass++) {
+      let improved = false;
+      eligible.forEach((st) => {
+        const oc = othersCount(st.id);
+        const row = { ...sched[st.id] };
+        const cur = costRow(st, sched[st.id], oc);
+        if (relabel(st, row, oc) && costRow(st, row, oc) < cur) {
+          sched[st.id] = row;
+          improved = true;
+        }
+      });
+      const rich = [], poor = [];
+      for (let d = 1; d <= daysInMonth; d++) {
+        if (!zero[d - 1]) continue;
+        const e = staffData.reduce((a, st) => {
+          var _a2;
+          return a + (isEarly((_a2 = sched[st.id]) == null ? void 0 : _a2[d]) ? headWeight(st) : 0);
+        }, 0);
+        const v = staffData.reduce((a, st) => {
+          var _a2;
+          return a + (isEve((_a2 = sched[st.id]) == null ? void 0 : _a2[d]) ? headWeight(st) : 0);
+        }, 0);
+        if (workers(d) > E(d) + V) rich.push(d);
+        if (e < E(d) || v < V) poor.push(d);
+      }
+      if (rich.length > 0 && poor.length > 0) {
+        eligible.forEach((st) => {
+          const lim = getMaxRun(st);
+          const oc = othersCount(st.id);
+          const row0 = sched[st.id];
+          const cur = costRow(st, row0, oc);
+          let best = null;
+          rich.forEach((r) => {
+            if (!DT.includes(row0[r]) || isCellLocked(st.id, r, sched) || isNg(st.id, r, N.OFF)) return;
+            poor.forEach((pd) => {
+              if (pd === r || row0[pd] !== N.OFF || isCellLocked(st.id, pd, sched)) return;
+              const pv = pd - 1 >= 1 ? row0[pd - 1] : getShiftSafe(st.id, pd - 1, sched);
+              if (pv === N.NIGHT_END || pv === N.NIGHT) return;
+              const row = { ...row0, [r]: N.OFF, [pd]: N.DAY };
+              if (!relabel(st, row, oc)) return;
+              if (maxRunOf(row) > Math.max(lim, maxRunOf(row0))) return;
+              if (maxOffRunOf(row) > Math.max(2, maxOffRunOf(row0))) return;
+              const c = costRow(st, row, oc);
+              if (c < cur && (!best || c < best.c)) best = { row, c };
+            });
+          });
+          if (best) {
+            sched[st.id] = best.row;
+            improved = true;
+          }
+        });
+      }
+      if (!improved) break;
+    }
+    let changed = 0, extra = 0, dayLeft = 0, short = 0;
+    staffData.forEach((st) => {
+      for (let d = 1; d <= daysInMonth; d++) if ((sched[st.id] || {})[d] !== before[st.id][d]) changed++;
+    });
+    for (let d = 1; d <= daysInMonth; d++) {
+      if (!zero[d - 1]) continue;
+      const e = staffData.reduce((a, st) => {
+        var _a2;
+        return a + (isEarly((_a2 = sched[st.id]) == null ? void 0 : _a2[d]) ? headWeight(st) : 0);
+      }, 0);
+      const v = staffData.reduce((a, st) => {
+        var _a2;
+        return a + (isEve((_a2 = sched[st.id]) == null ? void 0 : _a2[d]) ? headWeight(st) : 0);
+      }, 0);
+      if (e > E(d) || v > V) extra++;
+      if (e < E(d) || v < V) short++;
+      if (staffData.some((st) => {
+        var _a2;
+        return st.group !== "C" && ((_a2 = sched[st.id]) == null ? void 0 : _a2[d]) === N.DAY;
+      })) dayLeft++;
+    }
+    return { changed, extra, dayLeft, short };
   };
   const distributeEarlyLate = (isRetry = false) => {
     saveHistory();
@@ -3792,12 +4000,19 @@ function App() {
         }
       }
     }
+    const zr = finishZeroDayShifts(newSchedule);
+    let zeroNote = "";
+    if (zr) {
+      if (zr.dayLeft > 0) zeroNote += `日勤0の日のうち${zr.dayLeft}日は、休息時間の都合で日勤が残りました（手で調整してください）。`;
+      if (zr.short > 0) zeroNote += `早番または夕方が足りない日が${zr.short}日あります。`;
+      if (zr.extra > 0) zeroNote += `人数に余裕がある${zr.extra}日は、早番か遅番が2人になっています（公休数を増やすと1人ずつに近づきます）。`;
+    }
     setSchedule(newSchedule);
     setScheduleStep(step);
     if (isRetry) {
-      setMessage({ text: "Step 4: 早番・遅番を再配置しました (複数回押すことで別パターンを生成できます)。", type: "success" });
+      setMessage({ text: "Step 4: 早番・遅番を再配置しました (複数回押すことで別パターンを生成できます)。" + zeroNote, type: "success" });
     } else {
-      setMessage({ text: "Step 4: 早番・遅番を振り分けました。次は「早遅均」で別パターンを生成できます。", type: "success" });
+      setMessage({ text: "Step 4: 早番・遅番を振り分けました。次は「早遅均」で別パターンを生成できます。" + zeroNote, type: "success" });
     }
   };
   const runAutoHelp = () => {
@@ -3809,13 +4024,19 @@ function App() {
     const isOffLike = (v) => [N.OFF, N.PAID, N.REFRESH].includes(v);
     const cfgOf = (uid) => {
       const cur = uid === activeUnit;
-      const us = cur ? { morningTargets, earlyTargets, eveningTarget, nightShiftCount, nightRequiredQuals } : unitSettingsRef.current[uid] || {};
-      const um = cur ? { specificMorningTargets, nightShiftCount } : unitMonthRef.current[uid] || {};
+      const us = cur ? { dayTargets, morningTargets, earlyTargets, eveningTarget, nightShiftCount, nightRequiredQuals } : unitSettingsRef.current[uid] || {};
+      const um = cur ? { specificDayTargets, specificMorningTargets, nightShiftCount } : unitMonthRef.current[uid] || {};
+      const dt = Array.isArray(us.dayTargets) && us.dayTargets.length === 7 ? us.dayTargets : DEFAULT_DAY_TARGETS;
       const mt = Array.isArray(us.morningTargets) && us.morningTargets.length === 7 ? us.morningTargets : DEFAULT_MORNING_TARGETS;
       const et = Array.isArray(us.earlyTargets) && us.earlyTargets.length === 7 ? us.earlyTargets : DEFAULT_EARLY_TARGETS;
+      const earlyT = (dow) => typeof et[dow] === "number" && et[dow] >= 0 ? et[dow] : 1;
+      const dayT = (d, dow) => um.specificDayTargets && um.specificDayTargets[d] !== void 0 ? um.specificDayTargets[d] : dt[dow];
       return {
-        morning: (d, dow) => um.specificMorningTargets && um.specificMorningTargets[d] !== void 0 ? um.specificMorningTargets[d] : mt[dow],
-        early: (dow) => typeof et[dow] === "number" && et[dow] >= 0 ? et[dow] : 1,
+        morning: (d, dow) => {
+          const base = um.specificMorningTargets && um.specificMorningTargets[d] !== void 0 ? um.specificMorningTargets[d] : mt[dow];
+          return dayT(d, dow) === 0 ? Math.min(base, earlyT(dow)) : base;
+        },
+        early: earlyT,
         evening: typeof us.eveningTarget === "number" ? us.eveningTarget : DEFAULT_EVENING_TARGET,
         night: typeof um.nightShiftCount === "number" ? um.nightShiftCount : typeof us.nightShiftCount === "number" ? us.nightShiftCount : 2,
         quals: (us.nightRequiredQuals || []).filter((q) => qualificationOptions.includes(q))
@@ -5332,7 +5553,7 @@ function App() {
       checked: eveningOverEarly,
       onChange: (e) => setEveningOverEarly(e.target.checked)
     }
-  ), /* @__PURE__ */ React.createElement("span", null, /* @__PURE__ */ React.createElement("b", null, "夕方を早番より優先する"), /* @__PURE__ */ React.createElement("br", null), /* @__PURE__ */ React.createElement("span", { className: "text-gray-500" }, "その日に夕方へ出せるのが早番の1名しかいない場合、その人を日遅に回して夕方を確保します。 かわりにその日の早番はゼロになります。OFF のときは早番を残し、夕方を空けます。"))), /* @__PURE__ */ React.createElement("h4", { className: "font-bold text-sm text-gray-700 mb-2 border-b pb-1" }, "各曜日の日勤必要数（目安・均し用）"), /* @__PURE__ */ React.createElement("div", { className: "grid grid-cols-7 gap-1 sm:gap-2 mb-4" }, WEEKDAYS.map((w, i) => /* @__PURE__ */ React.createElement("div", { key: i, className: "flex flex-col items-center" }, /* @__PURE__ */ React.createElement("span", { className: "text-xs sm:text-sm text-gray-600 mb-1" }, w), /* @__PURE__ */ React.createElement(
+  ), /* @__PURE__ */ React.createElement("span", null, /* @__PURE__ */ React.createElement("b", null, "夕方を早番より優先する"), /* @__PURE__ */ React.createElement("br", null), /* @__PURE__ */ React.createElement("span", { className: "text-gray-500" }, "その日に夕方へ出せるのが早番の1名しかいない場合、その人を日遅に回して夕方を確保します。 かわりにその日の早番はゼロになります。OFF のときは早番を残し、夕方を空けます。"))), /* @__PURE__ */ React.createElement("h4", { className: "font-bold text-sm text-gray-700 mb-1 border-b pb-1" }, "各曜日の日勤必要数（目安・均し用）"), /* @__PURE__ */ React.createElement("p", { className: "text-[10px] text-gray-500 mb-2" }, /* @__PURE__ */ React.createElement("b", null, "0"), "にした曜日は日勤を置かず、早番と遅番（夕方）だけで組みます（グループホームなどの「早番1・遅番1」の体制）。その曜日の朝ピーク必要数は、早番必要数として扱います。"), /* @__PURE__ */ React.createElement("div", { className: "grid grid-cols-7 gap-1 sm:gap-2 mb-4" }, WEEKDAYS.map((w, i) => /* @__PURE__ */ React.createElement("div", { key: i, className: "flex flex-col items-center" }, /* @__PURE__ */ React.createElement("span", { className: "text-xs sm:text-sm text-gray-600 mb-1" }, w), /* @__PURE__ */ React.createElement(
     "input",
     {
       type: "number",
