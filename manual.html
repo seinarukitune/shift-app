@@ -289,7 +289,7 @@
         <li>帯の <span class="ui">◀ ▶</span> で作成する年月を選び、<span class="ui">公休</span> の日数を確認します。</li>
         <li><b>前月の情報を入れます。</b>前月のシフトをCSVで保存してある場合は <span class="ui">📁 先月読込</span>。連勤や夜勤明けを、月をまたいでチェックできるようになります。CSVがない場合は <span class="ui">⚙️ 設定</span> の <span class="ui">🌙 前月夜勤</span> で、前月末日に夜勤だった職員を選びます（その職員は1日が「明」、2日が「公休」になります）。
           <figure><img src="manual_img/prevnight.jpg" alt="前月夜勤者設定の画面" loading="lazy"><figcaption>前月夜勤者の設定</figcaption></figure></li>
-        <li><b>希望休や決まっている勤務を入れます。</b>表のマスをクリックして入力します（<a href="#edit">7章</a>）。希望休をGoogleフォームで集めている場合は <span class="ui">🙋📂 希望休読込</span> で一括で取り込めます（<a href="#requests">10章</a>）。</li>
+        <li><b>希望休や決まっている勤務を入れます。</b>表のマスをクリックして入力します（<a href="#edit">7章</a>）。希望休をGoogleフォームで集めている場合は <span class="ui">📋 Googleフォーム連携</span> から一括で取り込めます（<a href="#requests">10章</a>）。</li>
         <li><span class="ui">次へ ▶</span> を押します（最後まで自動で作るときは <span class="ui">⚡ 自動作成（全ステップ）</span>）。</li>
       </ol>
     </div>
@@ -417,11 +417,11 @@
   <!-- 11 -->
   <section id="requests">
     <h2><span class="num">11</span>希望休をフォームで集める（応用）</h2>
-    <p>Googleフォームで集めた希望休・希望勤務・NG勤務を、まとめて取り込むこともできます。</p>
+    <p>Googleフォームで集めた希望休・希望勤務・NG勤務を、まとめて取り込むこともできます。ステップ0の <span class="ui">📋 Googleフォーム連携</span> から使います。<b>フォームとスプレッドシートを使っていない施設では、この機能は不要です</b>（希望休はマスをクリックして入力します）。</p>
     <ol class="steps">
-      <li><span class="ui">🙋💾 名簿書出</span> で職員名簿のCSVを書き出し、集計用のGoogleスプレッドシートの「職員マスタ」シートに貼り付けます（フォームの氏名の選択肢に使います）。</li>
+      <li><span class="ui">📋 Googleフォーム連携</span> の <span class="ui">🙋💾 名簿を書き出す</span> で職員名簿のCSVを書き出し、集計用のGoogleスプレッドシートの「職員マスタ」シートに貼り付けます（フォームの氏名の選択肢に使います）。</li>
       <li>職員がフォームで希望を入力します。</li>
-      <li>集計用のスクリプト（Google Apps Script）が書き出したJSONファイルを、<span class="ui">🙋📂 希望休読込</span> で読み込みます。</li>
+      <li>集計用のスクリプト（Google Apps Script）が書き出したJSONファイルを、<span class="ui">📋 Googleフォーム連携</span> の <span class="ui">🙋📂 希望休を読み込む</span> で読み込みます。</li>
       <li>取り込み結果（職員登録がない氏名、未提出の職員、既存のシフトを上書きした箇所など）が画面に一覧で表示されるので、確認します。</li>
     </ol>
     <div class="note"><b>補足</b>フォームと集計スクリプトは、施設のGoogleアカウントで別に用意する必要があります（この公開版には含まれていません）。取り込むと、ファイルに含まれる職員の「希望・NG設定」が置き換わります。職員設定・人数設定・時間設定には影響しません。</div>
