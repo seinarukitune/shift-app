@@ -202,9 +202,10 @@
   <section id="setup">
     <h2><span class="num">5</span>最初の準備（初回のみ）</h2>
     <p>はじめに職員と必要人数を登録します。一度登録すれば、翌月からはそのまま使えます。設定は、画面上部の <span class="ui">⚙️ 設定</span>（どのステップでも表示されます）を押すと出る画面から開きます（職員設定・人数設定・時間設定・前月夜勤と、設定ファイルの保存・読込）。</p>
+    <figure><img src="manual_img/settings.jpg" alt="設定の画面" loading="lazy"><figcaption><span class="ui">⚙️ 設定</span> を押すと出る画面。ここから各設定を開きます。</figcaption></figure>
 
     <h3>5-1　職員設定（<span class="ui">⚙️ 設定</span> → <span class="ui">👥 職員設定</span>）</h3>
-    <figure><img src="manual_img/staff.jpg" alt="職員設定の画面" loading="lazy"><figcaption>職員設定。初期状態では見本として「職員A〜C」が入っています。</figcaption></figure>
+    <figure><img src="manual_img/staff.jpg" alt="職員設定の画面" loading="lazy"><figcaption>職員設定。初期状態では見本として「職員A〜C」が入っています。上の「ユニット」で、ユニットの追加や名前の変更ができます。</figcaption></figure>
     <table>
       <tr><th>項目</th><th>内容</th></tr>
       <tr><td>名前</td><td>職員名。CSVの読み込みや希望休の取り込みでは、この名前で照合します。</td></tr>
@@ -242,7 +243,7 @@
     <div class="note"><b>夜勤に必ず1名含める職種を使うときの注意</b>対象の職員の職種を、<span class="ui">👥 職員設定</span> で正しく選んでおいてください。また、その職種の職員の夜勤回数の合計が、その月の日数（30〜31回）以上必要です。人数が少ないと、その職種の職員の夜勤回数が多くなります（例：看護師3名なら1人あたり約10回）。</div>
 
     <h3>5-3　時間と表示（<span class="ui">⚙️ 設定</span> → <span class="ui">⏰ 時間設定</span>）</h3>
-    <figure><img src="manual_img/times.jpg" alt="シフト時間設定の画面" loading="lazy"><figcaption>シフト時間と、表の下に在籍人数を表示する時刻（在籍スナップショット）を設定します。</figcaption></figure>
+    <figure><img src="manual_img/times.jpg" alt="シフト時間設定の画面" loading="lazy"><figcaption>シフト時間・実働時間・公休の決め方と、表の下に在籍人数を表示する時刻（在籍スナップショット）を設定します。</figcaption></figure>
     <p>「在籍スナップショット時刻」に9時・16時などを追加すると、その時刻に勤務している人数が表の下に表示されます。「警告ライン」の人数より少ないと赤く表示されます。</p>
     <h3 id="hours">5-4　勤務時間で公休数を決める（常勤）</h3>
     <p>月の勤務時間（例：170時間以上）で公休数を決めている施設向けです。<span class="ui">⚙️ 設定</span> → <span class="ui">⏰ 時間設定</span> の「公休の決め方」で「勤務時間で決める」を選びます。</p>
@@ -396,6 +397,7 @@
       <tr><td><span class="ui">⚙️💾 設定保存</span></td><td>（<span class="ui">⚙️ 設定</span> の中）職員・人数・時間の設定を保存します。ユニットと、ユニットごとの人数設定も含みます。</td><td>JSON</td></tr>
       <tr><td><span class="ui">⚙️📂 設定読込</span></td><td>（<span class="ui">⚙️ 設定</span> の中）保存した設定で上書きします。作成中のシフト表は残り、同じ名前の職員は引き継がれます。</td><td>JSON</td></tr>
     </table>
+    <figure><img src="manual_img/print.jpg" alt="印刷の画面" loading="lazy"><figcaption><span class="ui">🖨️ 印刷</span> の画面。左で印刷する情報を選び、右のプレビューで確認してから印刷します。</figcaption></figure>
     <div class="note"><b>CSVの形式</b>1行目が「氏名,グループ,1(日),2(月),…」、2行目以降が職員ごとの勤務です。このアプリで書き出したCSVをそのまま使うのが確実です。自分で作る場合は同じ形式にしてください。</div>
     <div class="warn"><b>個人情報の取り扱い</b>書き出したCSVや設定ファイルには、職員の実名が入っています。施設の情報管理のルールに従って保管し、インターネット上（GitHubなど）には公開しないでください。</div>
   </section>
