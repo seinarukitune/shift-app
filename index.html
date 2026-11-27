@@ -13,6 +13,8 @@
 <html lang="ja">
 <head>
   <meta charset="UTF-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-zM5cLoGUwwCveqtU8q2mGiNoneLlTSNNOPvoCOXHg0k=' https://cdn.tailwindcss.com https://unpkg.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'none'; media-src 'none'; frame-src 'none'; worker-src 'none'; object-src 'none'; manifest-src 'none'; form-action 'none'; base-uri 'none'">
+  <meta name="referrer" content="no-referrer">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <title>シフト作成アプリ</title>
   <!-- Tailwind CSS -->
@@ -144,6 +146,9 @@ const DEFAULT_QUALIFICATIONS = ["介護福祉士", "実務者研修", "初任者
 const CONTACT_EMAIL = "kaigo.app.lab@gmail.com";
 const CONTACT_TYPES = ["ご質問", "不具合の報告", "ご意見・ご要望", "その他"];
 const CHANGELOG = [
+  { version: "v.23.1", date: "2026-11-27", items: [
+    "入力した職員名やシフトがインターネットに送られないことを、ブラウザでも確実に守る設定（外部との通信を止める設定）を入れました。アプリの使い方は変わりません。"
+  ] },
   { version: "v.23", date: "2026-11-26", items: [
     "ユニット（最大3つ）ごとにシフトを作れるようにしました。職員設定で「+ ユニットを追加」を押し、職員ごとに所属ユニットを選びます。画面上部のタブでユニットを切り替え、そのユニットの職員だけで自動作成します。",
     "人数設定（日勤・朝ピーク・早番・夕方・夜勤人数など）は、ユニットごとに分かれています。",
